@@ -70,6 +70,31 @@ class GitHubClient:
         payload = await self._request("GET", f"/repos/{full_name}")
         return RepoSummary.model_validate(payload)
 
+    async def paginate(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        params = dict(params or {})
+        per_page = int(params.get("per_page", 100))
+        page = 1
+        while True:
+            page_params = {**params, "page": page, "per_page": per_page}
+            payload = await self._request("GET", path, params=page_params)
+            if isinstance(payload, dict) and "items" in payload:
+                items = payload["items"]
+            elif isinstance(payload, list):
+                items = payload
+            else:
+                break
+            if not items:
+                break
+            for item in items:
+                yield item
+            if len(items) < per_page:
+                break
+            page += 1
+
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         cache_key = f"{method} {path} {self._sorted_params(kwargs.get('params'))}"
         cached = self._etag_cache.get(cache_key)
