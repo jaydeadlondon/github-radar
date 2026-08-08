@@ -68,3 +68,45 @@ def top(
         _render_repos_table(repos, "Top repositories by stars")
 
     _run_async(_impl)
+
+
+@app.command()
+def search(
+    query: str = typer.Option("", "--query", "-q", help="Free-text search query."),
+    language: str = typer.Option(
+        None, "--language", "-l", help="Filter by language, e.g. python."
+    ),
+    min_stars: int = typer.Option(
+        50, "--min-stars", min=0, help="Minimum number of stars."
+    ),
+    limit: int = typer.Option(
+        10,
+        "--limit",
+        "-n",
+        min=1,
+        max=100,
+        help="How many repositories to show.",
+    ),
+) -> None:
+    parts = [
+        part
+        for part in (
+            query.strip(),
+            language and f"language:{language}",
+            min_stars and f"stars:>={min_stars}",
+        )
+        if part
+    ]
+    q = " ".join(parts)
+    if not q:
+        console.print(
+            "[red]Error:[/red] give --query or at least one filter (--language/--min-stars)"
+        )
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        async with GitHubClient() as client:
+            repos = await client.search_repos(q, per_page=limit)
+        _render_repos_table(repos, "Search results")
+
+    _run_async(_impl)
