@@ -52,6 +52,24 @@ class GitHubClient:
     async def __aexit__(self, *exc: object) -> None:
         await self.close()
 
+    async def search_repos(
+        self,
+        query: str,
+        sort: str = "stars",
+        order: str = "desc",
+        per_page: int = 30,
+    ) -> list[RepoSummary]:
+        payload = await self._request(
+            "GET",
+            "/search/repositories",
+            params={"q": query, "sort": sort, "order": order, "per_page": per_page},
+        )
+        return RepoSearchResponse.model_validate(payload).items
+
+    async def get_repo(self, full_name: str) -> RepoSummary:
+        payload = await self._request("GET", f"/repos/{full_name}")
+        return RepoSummary.model_validate(payload)
+
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         cache_key = f"{method} {path} {self._sorted_params(kwargs.get('params'))}"
         cached = self._etag_cache.get(cache_key)
