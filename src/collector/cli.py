@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.panel import Panel
 from github.client import GitHubClient
 from github.errors import GitHubError
 from github.models import RepoSummary
@@ -108,5 +109,33 @@ def search(
         async with GitHubClient() as client:
             repos = await client.search_repos(q, per_page=limit)
         _render_repos_table(repos, "Search results")
+
+    _run_async(_impl)
+
+
+@app.command()
+def repo(
+    full_name: str = typer.Argument(
+        ...,
+        metavar="owner/name",
+        help="Repository in owner/name format, e.g. psf/requests",
+    ),
+) -> None:
+    if "/" not in full_name:
+        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        async with GitHubClient() as client:
+            result = await client.get_repo(full_name)
+        panel = Panel(
+            f"[bold]{result.full_name}[/bold]\n\n{result.description or '—'}\n\n"
+            f"Language: {result.language or '—'}\n"
+            f"Stars: {result.stargazers_count}\n"
+            f"Forks: {result.forks_count}\n"
+            f"URL: {result.html_url}",
+            title="Repository",
+        )
+        console.print(panel)
 
     _run_async(_impl)
