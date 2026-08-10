@@ -64,3 +64,32 @@ async def get_latest_snapshot(
         .order_by(RepoSnapshot.observed_at.desc())
         .limit(1)
     )
+
+
+async def get_history(
+    session: AsyncSession,
+    repo_id: int,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int | None = None,
+) -> list[RepoSnapshot]:
+    stmt = (
+        select(RepoSnapshot)
+        .where(RepoSnapshot.repo_id == repo_id)
+        .order_by(RepoSnapshot.observed_at)
+    )
+    if since is not None:
+        stmt = stmt.where(RepoSnapshot.observed_at >= since)
+    if until is not None:
+        stmt = stmt.where(RepoSnapshot.observed_at <= until)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(await session.scalars(stmt))
+
+
+async def get_repository_by_name(
+    session: AsyncSession, full_name: str
+) -> Repository | None:
+    return await session.scalar(
+        select(Repository).where(Repository.full_name == full_name)
+    )
