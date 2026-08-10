@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from db.models import Repository
+from db.models import Repository, RepoSnapshot
 from github.models import RepoSummary
 
 
@@ -32,3 +32,35 @@ async def upsert_repository(session: AsyncSession, repo: RepoSummary) -> Reposit
         existing.github_pushed_at = _parse_dt(repo.pushed_at)
     await session.flush()
     return existing
+
+
+async def create_snapshot(
+    session: AsyncSession,
+    repo_id: int,
+    *,
+    stargazers: int,
+    forks: int,
+    open_issues: int = 0,
+    observed_at: datetime | None = None,
+) -> RepoSnapshot:
+    snapshot = RepoSnapshot(
+        repo_id=repo_id,
+        stargazers_count=stargazers,
+        forks_count=forks,
+        open_issues_count=open_issues,
+        observed_at=observed_at,
+    )
+    session.add(snapshot)
+    await session.flush()
+    return snapshot
+
+
+async def get_latest_snapshot(
+    session: AsyncSession, repo_id: int
+) -> RepoSnapshot | None:
+    return await session.scalar(
+        select(RepoSnapshot)
+        .where(RepoSnapshot.repo_id == repo_id)
+        .order_by(RepoSnapshot.observed_at.desc())
+        .limit(1)
+    )
