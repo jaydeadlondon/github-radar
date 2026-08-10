@@ -34,6 +34,19 @@ def version() -> None:
     console.print(f"github-radar {__version__}")
 
 
+@app.command("init-db")
+def init_db() -> None:
+    async def _impl() -> None:
+        from db.base import engine
+        from db.models import Base
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        console.print("[green]Database initialized.[/green]")
+
+    _run_async(_impl)
+
+
 def _render_repos_table(repos: list[RepoSummary], title: str) -> None:
     table = Table(title=title)
     table.add_column("#", justify="right")
