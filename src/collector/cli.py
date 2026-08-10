@@ -47,6 +47,14 @@ def init_db() -> None:
     _run_async(_impl)
 
 
+async def _store_repos(repos: list[RepoSummary]) -> int:
+    from collector.store import save_repos
+    from db.base import SessionFactory
+
+    async with SessionFactory() as session:
+        return await save_repos(session, repos)
+
+
 def _render_repos_table(repos: list[RepoSummary], title: str) -> None:
     table = Table(title=title)
     table.add_column("#", justify="right")
@@ -75,10 +83,14 @@ def top(
         max=100,
         help="How many repositories to show.",
     ),
+    save: bool = typer.Option(False, "--save", help="Store results in the database."),
 ) -> None:
     async def _impl() -> None:
         async with GitHubClient() as client:
             repos = await client.search_repos("stars:>1000", per_page=limit)
+        if save:
+            saved = await _store_repos(repos)
+            console.print(f"[green]Saved {saved} repositories.[/green]")
         _render_repos_table(repos, "Top repositories by stars")
 
     _run_async(_impl)
@@ -101,6 +113,7 @@ def search(
         max=100,
         help="How many repositories to show.",
     ),
+    save: bool = typer.Option(False, "--save", help="Store results in the database."),
 ) -> None:
     parts = [
         part
@@ -121,6 +134,9 @@ def search(
     async def _impl() -> None:
         async with GitHubClient() as client:
             repos = await client.search_repos(q, per_page=limit)
+        if save:
+            saved = await _store_repos(repos)
+            console.print(f"[green]Saved {saved} repositories.[/green]")
         _render_repos_table(repos, "Search results")
 
     _run_async(_impl)
