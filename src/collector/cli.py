@@ -143,6 +143,24 @@ def search(
 
 
 @app.command()
+def snapshot() -> None:
+    async def _impl() -> None:
+        from collector.pipeline import run_snapshot
+
+        saved = await run_snapshot()
+        if saved:
+            console.print(
+                f"[green]Snapshot complete: {saved} repository(-ies) updated.[/green]"
+            )
+        else:
+            console.print(
+                "[yellow]No tracked repositories yet. Try `radar top --save` first.[/yellow]"
+            )
+
+    _run_async(_impl)
+
+
+@app.command()
 def repo(
     full_name: str = typer.Argument(
         ...,
