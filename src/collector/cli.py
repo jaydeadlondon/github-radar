@@ -9,6 +9,7 @@ from github.client import GitHubClient
 from github.errors import GitHubError
 from github.models import RepoSummary
 from version import __version__
+from datetime import UTC
 
 app = typer.Typer(
     name="radar",
@@ -138,6 +139,59 @@ def search(
             saved = await _store_repos(repos)
             console.print(f"[green]Saved {saved} repositories.[/green]")
         _render_repos_table(repos, "Search results")
+
+    _run_async(_impl)
+
+
+@app.command()
+def history(
+    full_name: str = typer.Argument(
+        ...,
+        metavar="owner/name",
+        help="Tracked repository in owner/name format, e.g. psf/requests.",
+    ),
+    days: int = typer.Option(30, "--days", min=1, help="How many days back to show."),
+) -> None:
+    if "/" not in full_name:
+        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        from datetime import datetime, timedelta
+
+        from db.base import SessionFactory
+        from db.repositories import get_history, get_repository_by_name
+
+        async with SessionFactory() as session:
+            repo = await get_repository_by_name(session, full_name)
+            if repo is None:
+                console.print(f"[red]Repository not tracked:[/red] {full_name}")
+                raise typer.Exit(1)
+            since = datetime.now(UTC) - timedelta(days=days)
+            snapshots = await get_history(session, repo.id, since=since)
+
+        if not snapshots:
+            console.print(
+                f"[yellow]No snapshots for {full_name} in the last {days} days.[/yellow]"
+            )
+            return
+
+        table = Table(title=f"History: {full_name} (last {days} days)")
+        table.add_column("Observed at")
+        table.add_column("Stars", justify="right")
+        table.add_column("Forks", justify="right")
+        table.add_column("Δ stars", justify="right")
+        previous: int | None = None
+        for snap in snapshots:
+            delta = snap.stargazers_count - previous if previous is not None else 0
+            table.add_row(
+                snap.observed_at.strftime("%Y-%m-%d %H:%M"),
+                f"{snap.stargazers_count:,}",
+                f"{snap.forks_count:,}",
+                f"{delta:+d}",
+            )
+            previous = snap.stargazers_count
+        console.print(table)
 
     _run_async(_impl)
 
