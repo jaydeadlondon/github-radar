@@ -48,6 +48,21 @@ def init_db() -> None:
     _run_async(_impl)
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
+    port: int = typer.Option(8000, "--port", help="Bind port."),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes."),
+) -> None:
+    def _impl() -> None:
+        import uvicorn
+        from api.app import create_app
+
+        uvicorn.run(create_app(), host=host, port=port, reload=reload)
+
+    _impl()
+
+
 async def _store_repos(repos: list[RepoSummary]) -> int:
     from collector.store import save_repos
     from db.base import SessionFactory
