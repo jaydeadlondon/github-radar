@@ -42,6 +42,9 @@ def create_app() -> FastAPI:
             "version": __version__,
             "docs": "/docs",
             "health": "/health",
+            "repos": f"{settings.api_prefix}/repos",
+            "trends": f"{settings.api_prefix}/trends",
+            "languages": f"{settings.api_prefix}/languages",
         }
 
     @app.get("/{full_path:path}", include_in_schema=False)
