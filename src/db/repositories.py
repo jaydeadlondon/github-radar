@@ -93,3 +93,56 @@ async def get_repository_by_name(
     return await session.scalar(
         select(Repository).where(Repository.full_name == full_name)
     )
+
+
+async def list_repositories(
+    session: AsyncSession,
+    *,
+    language: str | None = None,
+    sort: str = "stars",
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[Repository], int]:
+    from sqlalchemy import and_, func
+
+    latest = (
+        select(
+            RepoSnapshot.repo_id,
+            func.max(RepoSnapshot.observed_at).label("latest_at"),
+        )
+        .group_by(RepoSnapshot.repo_id)
+        .subquery()
+    )
+    rows = (
+        select(Repository, RepoSnapshot.stargazers_count, RepoSnapshot.forks_count)
+        .join(latest, latest.c.repo_id == Repository.id, isouter=True)
+        .join(
+            RepoSnapshot,
+            and_(
+                RepoSnapshot.repo_id == latest.c.repo_id,
+                RepoSnapshot.observed_at == latest.c.latest_at,
+            ),
+            isouter=True,
+        )
+    )
+    if language:
+        rows = rows.where(Repository.language == language)
+
+    count_rows = rows.with_only_columns(func.count()).order_by(None)
+    total = (await session.execute(count_rows)).scalar_one()
+
+    if sort == "name":
+        rows = rows.order_by(Repository.full_name)
+    elif sort == "updated":
+        rows = rows.order_by(Repository.updated_at.desc())
+    else:
+        rows = rows.order_by(RepoSnapshot.stargazers_count.desc().nulls_last())
+
+    rows = rows.offset(offset).limit(limit)
+
+    result = []
+    for repo, stars, forks in await session.execute(rows):
+        repo.latest_stargazers = stars if stars is not None else 0
+        repo.latest_forks = forks if forks is not None else 0
+        result.append(repo)
+    return result, total
