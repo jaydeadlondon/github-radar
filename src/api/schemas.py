@@ -1,5 +1,16 @@
 from datetime import datetime
+from typing import Generic, TypeVar
 from pydantic import BaseModel, ConfigDict
+
+T = TypeVar("T")
+
+
+class Paginated(BaseModel, Generic[T]):
+    total: int
+    offset: int
+    limit: int
+    next_offset: int | None
+    items: list[T]
 
 
 class SnapshotOut(BaseModel):
