@@ -1,4 +1,6 @@
 import logging
+import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
@@ -29,6 +31,7 @@ def create_app() -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+    app.middleware("http")(request_logging)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -62,6 +65,23 @@ def create_app() -> FastAPI:
         )
 
     return app
+
+
+async def request_logging(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "%s %s -> %s (%.1f ms) [%s]",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+        request_id,
+    )
+    return response
 
 
 async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
