@@ -1,7 +1,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -9,6 +9,7 @@ from config import settings
 from db.base import engine
 from version import __version__
 from api.routes import history, repos, trends, languages
+from api.schemas import ErrorOut
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_exception_handler(HTTPException, _http_exception_handler)
+    app.add_exception_handler(Exception, _unhandled_exception_handler)
     app.include_router(repos.router, prefix=settings.api_prefix)
     app.include_router(history.router, prefix=settings.api_prefix)
     app.include_router(trends.router, prefix=settings.api_prefix)
@@ -59,3 +62,23 @@ def create_app() -> FastAPI:
         )
 
     return app
+
+
+async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    if not isinstance(detail, str):
+        detail = str(detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorOut(detail=detail, code=exc.status_code).model_dump(),
+    )
+
+
+async def _unhandled_exception_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content=ErrorOut(detail="Internal server error", code=500).model_dump(),
+    )
