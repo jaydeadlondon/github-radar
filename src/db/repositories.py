@@ -87,6 +87,48 @@ async def get_history(
     return list(await session.scalars(stmt))
 
 
+async def top_growth(
+    session: AsyncSession,
+    since: datetime,
+    *,
+    limit: int = 10,
+) -> list[tuple[Repository, int]]:
+    rows = await session.execute(
+        select(Repository, RepoSnapshot)
+        .join(RepoSnapshot, RepoSnapshot.repo_id == Repository.id)
+        .where(RepoSnapshot.observed_at >= since)
+        .order_by(Repository.id, RepoSnapshot.observed_at)
+    )
+    deltas: dict[int, tuple[Repository, int, int, int, int]] = {}
+    for repo, snapshot in rows:
+        if repo.id not in deltas:
+            deltas[repo.id] = (
+                repo,
+                snapshot.stargazers_count,
+                snapshot.stargazers_count,
+                snapshot.stargazers_count,
+                snapshot.forks_count,
+            )
+        else:
+            stored, first_stars, _, _, _ = deltas[repo.id]
+            deltas[repo.id] = (
+                stored,
+                first_stars,
+                snapshot.stargazers_count,
+                snapshot.stargazers_count,
+                snapshot.forks_count,
+            )
+    for repo, _first, _last, latest_stars, latest_forks in deltas.values():
+        repo.latest_stargazers = latest_stars
+        repo.latest_forks = latest_forks
+    ranked = sorted(
+        ((repo, last - first) for repo, first, last, _ls, _lf in deltas.values()),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    return ranked[:limit]
+
+
 async def get_repository_by_name(
     session: AsyncSession, full_name: str
 ) -> Repository | None:
