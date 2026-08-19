@@ -8,7 +8,7 @@ from sqlalchemy import text
 from config import settings
 from db.base import engine
 from version import __version__
-from api.routes import history, repos, trends
+from api.routes import history, repos, trends, languages
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ def create_app() -> FastAPI:
     app.include_router(repos.router, prefix=settings.api_prefix)
     app.include_router(history.router, prefix=settings.api_prefix)
     app.include_router(trends.router, prefix=settings.api_prefix)
+    app.include_router(languages.router, prefix=settings.api_prefix)
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
