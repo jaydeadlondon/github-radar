@@ -7,11 +7,11 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from api.routes import health, history, languages, repos, trends
+from api.schemas import ErrorOut
 from config import settings
 from db.base import engine
 from version import __version__
-from api.routes import history, repos, trends, languages, health
-from api.schemas import ErrorOut
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,11 @@ def create_app() -> FastAPI:
     )
     app.add_exception_handler(HTTPException, _http_exception_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)
-    app.include_router(repos.router, prefix=settings.api_prefix)
     app.include_router(history.router, prefix=settings.api_prefix)
+    app.include_router(repos.router, prefix=settings.api_prefix)
     app.include_router(trends.router, prefix=settings.api_prefix)
     app.include_router(languages.router, prefix=settings.api_prefix)
-    app.include_router(health.router, prefix=settings.api_prefix)
+    app.include_router(health.router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
@@ -63,6 +63,9 @@ def create_app() -> FastAPI:
     async def not_found(full_path: str) -> JSONResponse:
         return JSONResponse(
             status_code=404,
+            content=ErrorOut(
+                detail=f"Route not found: /{full_path}", code=404
+            ).model_dump(),
         )
 
     return app
