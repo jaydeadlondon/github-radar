@@ -55,3 +55,15 @@ async def db_session():
 
     async with SessionFactory() as session:
         yield session
+
+
+@pytest.fixture
+async def api_client():
+    import httpx
+
+    from api.app import create_app
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
