@@ -2,6 +2,23 @@
 
 All notable changes to this project.
 
+## [0.3.0] — 2026-08-20
+
+### Added
+
+- FastAPI application with lifespan, CORS and request logging
+- `radar serve` command (uvicorn)
+- REST API under `/api/v1`:
+  - `GET /repos` (paginated, language filter, sort)
+  - `GET /repos/{owner}/{name}` (detail + latest snapshot)
+  - `GET /repos/{owner}/{name}/history` (time range, limit)
+  - `GET /trends` (top star growth over 7/30/90 days)
+  - `GET /languages` (per-language aggregates)
+- `GET /health` and root entry point
+- Consistent `ErrorOut` error payloads and `Paginated` list envelope
+- Parameter validation, custom exception handlers, request-id header
+- Tests: repos, trends/history, health, contract tests (48 total)
+
 ## [0.2.0] — 2026-08-13
 
 ### Added

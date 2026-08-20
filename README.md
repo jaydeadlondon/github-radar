@@ -4,7 +4,7 @@ Analytics service that tracks rising stars on GitHub: it collects data about
 repositories, builds star-growth history, and detects projects that are
 "taking off" before everyone else.
 
-> **Status:** version 0.2 — CLI collector + SQLite storage with Alembic migrations.
+> **Status:** version 0.3 — CLI collector, SQLite storage and a REST API.
 
 ## Features
 
@@ -13,6 +13,8 @@ repositories, builds star-growth history, and detects projects that are
 - `radar repo owner/name` — single repository card
 - `radar snapshot` — record current stats for all tracked repositories
 - `radar history owner/name` — star-growth history from stored snapshots
+- `radar serve` — REST API server
+- REST API: repositories, history, trends, languages, health
 - Smart GitHub API client: rate-limit retries, pagination, ETag request caching
 
 ## Installation
@@ -43,26 +45,43 @@ radar version
 radar top --limit 10
 radar search --language python --min-stars 100
 radar repo psf/requests
-```
 
-## Storage (0.2)
-
-Data is stored in SQLite (default `radar.db`) using SQLAlchemy async.
-Schema changes are managed with Alembic migrations (`alembic/versions/`).
-
-```bash
-radar init-db                    # create tables
-radar top --save                 # fetch top repos and store them
-radar search --language python --save
-radar snapshot                   # record current stats for tracked repos
+# Storage
+radar init-db
+radar top --save
+radar snapshot
 radar history psf/requests --days 30
 ```
 
-Migrations can also be run explicitly:
+## REST API
+
+Start the server:
 
 ```bash
-alembic upgrade head
+radar serve --host 0.0.0.0 --port 8000
 ```
+
+Interactive docs: <http://127.0.0.1:8000/docs> (OpenAPI).
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Service health (incl. DB check) |
+| GET | `/api/v1/repos` | List tracked repos (`language`, `sort`, `limit`, `offset`) |
+| GET | `/api/v1/repos/{owner}/{name}` | Repo detail with latest snapshot |
+| GET | `/api/v1/repos/{owner}/{name}/history` | Snapshot history (`since`, `until`, `limit`) |
+| GET | `/api/v1/trends` | Top repos by star growth (`window` 7/30/90) |
+| GET | `/api/v1/languages` | Per-language aggregates |
+
+Examples:
+
+```bash
+curl http://127.0.0.1:8000/api/v1/repos?language=python&limit=5
+curl http://127.0.0.1:8000/api/v1/trends?window=7
+curl http://127.0.0.1:8000/api/v1/repos/psf/requests/history?days=30
+```
+
+Error responses use a consistent shape: `{"detail": "...", "code": 404}`.
+List endpoints return a paginated envelope: `{total, offset, limit, next_offset, items}`.
 
 ## Tests and linter
 
@@ -80,6 +99,7 @@ src/
 ├── version.py       # package version constant
 ├── github/          # GitHub API client: models, errors, client
 ├── collector/       # CLI (typer), store and snapshot pipeline
-└── db/              # SQLAlchemy async: engine, models, db helpers
+├── db/              # SQLAlchemy async: engine, models, db helpers
+└── api/             # FastAPI: app, deps, schemas, routes/
 alembic/             # database migrations
 ```
