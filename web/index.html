@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GitHub Radar</title>
+    <title>GitHub Radar — rising stars tracker</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -37,16 +38,62 @@
         </svg>
         <h1>GitHub Radar</h1>
       </div>
-      <span class="status-badge" id="status-badge">loading…</span>
+      <div class="topbar-actions">
+        <button
+          id="theme-toggle"
+          class="icon-btn"
+          title="Toggle theme"
+          aria-label="Toggle theme"
+        >
+          🌙
+        </button>
+        <span class="status-badge" id="status-badge">loading…</span>
+      </div>
     </header>
 
     <main class="content">
-      <section class="placeholder">
-        <h2>Dashboard is being built</h2>
-        <p>Version 0.4 is in progress — the first dashboard views land here.</p>
+      <section class="filters card">
+        <input
+          id="search"
+          type="search"
+          placeholder="Search repositories…"
+          autocomplete="off"
+        />
+        <select id="language-filter" aria-label="Filter by language">
+          <option value="">All languages</option>
+        </select>
+        <button id="refresh-btn" class="btn">Refresh</button>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Tracked repositories</h2>
+          <div class="table-wrap" id="repos-table-wrap">
+            <div class="empty">Loading…</div>
+          </div>
+        </div>
+
+        <div class="card chart-panel">
+          <div class="chart-title">Star growth</div>
+          <div class="chart-sub" id="chart-sub">
+            Select a repository to see its history
+          </div>
+          <div id="chart"></div>
+        </div>
+
+        <section class="card full" id="risers-section">
+          <h2>New this week</h2>
+          <div class="riser-grid" id="riser-grid">
+            <div class="empty">Loading…</div>
+          </div>
+        </section>
       </section>
     </main>
 
+    <div id="toasts"></div>
+
+    <script src="/vendor/echarts.min.js"></script>
+    <script src="/charts.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>
