@@ -131,6 +131,30 @@ async function loadRepos() {
   }
 }
 
+/* ---------- repo detail + chart ---------- */
+
+async function selectRepo(fullName) {
+  state.selectedRepo = fullName;
+  document.querySelectorAll("tr.repo-row").forEach((row) => {
+    row.classList.toggle("selected", row.dataset.fullName === fullName);
+  });
+  el("chart-sub").textContent = `${fullName} — star history`;
+  try {
+    const [detail, history] = await Promise.all([
+      fetchJSON(`${API}/repos/${fullName}`),
+      fetchJSON(`${API}/repos/${fullName}/history`),
+    ]);
+    renderStarChart(fullName, history);
+    const latest = detail.latest_snapshot;
+    el("chart-sub").textContent = latest
+      ? `${fullName} — ${formatNumber(latest.stargazers_count)} stars, ${formatNumber(latest.forks_count)} forks`
+      : `${fullName} — no data yet`;
+  } catch (err) {
+    el("chart-sub").textContent = `${fullName} — failed to load history`;
+    toast(err.message, "error");
+  }
+}
+
 /* ---------- language filter ---------- */
 
 async function loadLanguages() {
