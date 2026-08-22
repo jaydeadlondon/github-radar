@@ -65,21 +65,34 @@ async function refreshStatusBadge() {
 function renderReposTable(payload) {
   const wrap = el("repos-table-wrap");
   if (!payload.items.length) {
-    wrap.innerHTML =
-      '<div class="empty">No repositories tracked yet.' +
-      '<div class="hint">Run <code>radar top --save</code> on the server, then refresh.</div></div>';
+    const filtered = state.language || state.search;
+    if (filtered) {
+      wrap.innerHTML =
+        '<div class="empty">Nothing matches your filters.' +
+        '<div class="hint">Try a different language or search term.</div></div>';
+    } else {
+      el("risers-section").style.display = "none";
+      wrap.innerHTML =
+        '<div class="empty">No repositories tracked yet.' +
+        '<div class="hint">Run <code>radar top --save</code> on the server, then refresh.</div></div>';
+      emptyChart("Select a repository to see its star history");
+    }
     return;
   }
+  el("risers-section").style.display = "";
 
-  const arrows = { stars: "↓", name: "", updated: "" };
+  const arrow = (key) =>
+    state.sort === key
+      ? '<span class="arrow">↓</span>'
+      : '<span class="arrow">↕</span>';
   const table = document.createElement("table");
   table.innerHTML = `
     <thead>
       <tr>
-        <th class="sortable" data-sort="name">Repository</th>
+        <th class="sortable" data-sort="name">Repository ${arrow("name")}</th>
         <th>Language</th>
-        <th class="sortable num" data-sort="stars">Stars ${arrows.stars}</th>
-        <th class="num">Forks</th>
+        <th class="sortable num" data-sort="stars">Stars ${arrow("stars")}</th>
+        <th class="sortable num" data-sort="updated">Updated ${arrow("updated")}</th>
       </tr>
     </thead>
     <tbody>
