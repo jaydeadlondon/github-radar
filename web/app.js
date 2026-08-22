@@ -166,9 +166,11 @@ async function loadLanguages() {
       languages
         .map(
           (lang) =>
-            `<option value="${escapeHtml(lang.language)}">${escapeHtml(lang.language)}</option>`,
+            `<option value="${escapeHtml(lang.language)}">` +
+            `${escapeHtml(lang.language)} (${lang.repository_count})</option>`,
         )
         .join("");
+    if (state.language) select.value = state.language;
   } catch (err) {
     toast(`Languages: ${err.message}`, "warn");
   }
