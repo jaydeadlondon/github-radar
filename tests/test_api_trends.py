@@ -138,9 +138,10 @@ async def test_health_ok(api_client):
 async def test_root_stub(api_client):
     response = await api_client.get("/")
     assert response.status_code == 200
-    body = response.json()
-    assert body["name"] == "GitHub Radar"
-    assert body["docs"] == "/docs"
+    assert "text/html" in response.headers["content-type"]
+    assert "GitHub Radar" in response.text
+    docs = await api_client.get("/docs")
+    assert docs.status_code == 200
 
 
 async def test_unknown_route_returns_error_shape(api_client):

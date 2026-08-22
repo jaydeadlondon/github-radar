@@ -3,10 +3,13 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from pathlib import Path
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from api.routes import health, history, languages, repos, trends
 from api.schemas import ErrorOut
 from config import settings
@@ -14,6 +17,23 @@ from db.base import engine
 from version import __version__
 
 logger = logging.getLogger(__name__)
+
+_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+
+
+class DashboardStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return JSONResponse(
+                    status_code=404,
+                    content=ErrorOut(
+                        detail=f"Not found: /{path}", code=404
+                    ).model_dump(),
+                )
+            raise
 
 
 @asynccontextmanager
@@ -39,7 +59,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_exception_handler(HTTPException, _http_exception_handler)
+    app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)
     app.include_router(history.router, prefix=settings.api_prefix)
     app.include_router(repos.router, prefix=settings.api_prefix)
@@ -47,27 +67,9 @@ def create_app() -> FastAPI:
     app.include_router(languages.router, prefix=settings.api_prefix)
     app.include_router(health.router)
 
-    @app.get("/", include_in_schema=False)
-    async def root() -> dict[str, str]:
-        return {
-            "name": "GitHub Radar",
-            "version": __version__,
-            "docs": "/docs",
-            "health": "/health",
-            "repos": f"{settings.api_prefix}/repos",
-            "trends": f"{settings.api_prefix}/trends",
-            "languages": f"{settings.api_prefix}/languages",
-        }
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def not_found(full_path: str) -> JSONResponse:
-        return JSONResponse(
-            status_code=404,
-            content=ErrorOut(
-                detail=f"Route not found: /{full_path}", code=404
-            ).model_dump(),
-        )
-
+    app.mount(
+        "/", DashboardStaticFiles(directory=_WEB_DIR, html=True), name="dashboard"
+    )
     return app
 
 
@@ -88,7 +90,9 @@ async def request_logging(request: Request, call_next):
     return response
 
 
-async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+async def _http_exception_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
     detail = exc.detail
     if not isinstance(detail, str):
         detail = str(detail)

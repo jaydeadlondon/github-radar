@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     github_token: str = ""
     api_base_url: str = "https://api.github.com"
     request_timeout: float = 30.0
-    user_agent: str = "github-radar/0.3"
+    user_agent: str = "github-radar/0.4"
     max_retries: int = 3
     backoff_base: float = 1.0
     backoff_max: float = 60.0
