@@ -142,3 +142,26 @@ async def test_error_shape_is_consistent(api_client):
         assert set(body) == {"detail", "code"}, path
         assert body["code"] == 404, path
         assert isinstance(body["detail"], str), path
+
+
+async def test_dashboard_static_assets(api_client):
+    for path in ["/", "/styles.css", "/app.js", "/charts.js", "/vendor/echarts.min.js"]:
+        response = await api_client.get(path)
+        assert response.status_code == 200, path
+        assert response.headers["content-type"].startswith(
+            ("text/html", "text/css", "text/javascript", "application/javascript")
+        ), path
+
+
+async def test_search_query_parameter(api_client, db_session):
+    await _seed_full_db(db_session)
+
+    response = await api_client.get("/api/v1/repos", params={"q": "flask"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["full_name"] == "pallets/flask"
+
+    response = await api_client.get("/api/v1/repos", params={"q": "zzz-no-match"})
+    assert response.status_code == 200
+    assert response.json()["items"] == []
