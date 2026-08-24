@@ -7,6 +7,7 @@ const state = {
   theme: localStorage.getItem("radar-theme") || "dark",
   period: "30",
   selectedHistory: [],
+  search: "",
 };
 
 const el = (id) => document.getElementById(id);
@@ -135,6 +136,7 @@ function showTableSpinner() {
 async function loadRepos() {
   const params = new URLSearchParams({ sort: state.sort, limit: "100" });
   if (state.language) params.set("language", state.language);
+  if (state.search) params.set("q", state.search);
   showTableSpinner();
   try {
     const payload = await fetchJSON(`${API}/repos?${params}`);
@@ -220,6 +222,10 @@ function init() {
 
   el("language-filter").addEventListener("change", (event) => {
     state.language = event.target.value;
+    loadRepos();
+  });
+  el("search").addEventListener("input", (event) => {
+    state.search = event.target.value.trim();
     loadRepos();
   });
   el("refresh-btn").addEventListener("click", () => {

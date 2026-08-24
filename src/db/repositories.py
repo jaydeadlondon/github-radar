@@ -144,6 +144,7 @@ async def list_repositories(
     sort: str = "stars",
     limit: int = 20,
     offset: int = 0,
+    search: str | None = None,
 ) -> tuple[list[Repository], int]:
     from sqlalchemy import and_, func
 
@@ -169,6 +170,8 @@ async def list_repositories(
     )
     if language:
         rows = rows.where(Repository.language == language)
+    if search:
+        rows = rows.where(Repository.full_name.ilike(f"%{search}%"))
 
     count_rows = rows.with_only_columns(func.count()).order_by(None)
     total = (await session.execute(count_rows)).scalar_one()

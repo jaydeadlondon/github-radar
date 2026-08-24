@@ -27,13 +27,16 @@ def _to_out(repo: Repository) -> RepoOut:
 )
 async def list_repos(
     language: str | None = Query(None, description="Filter by language, e.g. python"),
+    q: str | None = Query(
+        None, min_length=1, max_length=100, description="Search in repo names"
+    ),
     sort: str = Query("stars", pattern="^(stars|name|updated)$"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> Paginated[RepoOut]:
     repos, total = await list_repositories(
-        session, language=language, sort=sort, limit=limit, offset=offset
+        session, language=language, search=q, sort=sort, limit=limit, offset=offset
     )
     next_offset = offset + limit if offset + limit < total else None
     return Paginated[RepoOut](
