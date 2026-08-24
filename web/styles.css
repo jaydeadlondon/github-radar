@@ -348,6 +348,15 @@ th.num {
   }
 }
 
+.spinner-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 0;
+  color: var(--text-muted);
+}
+
 /* Light theme */
 body.light {
   --bg: #ffffff;

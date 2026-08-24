@@ -125,9 +125,15 @@ function renderReposTable(payload) {
   });
 }
 
+function showTableSpinner() {
+  el("repos-table-wrap").innerHTML =
+    '<div class="empty"><span class="spinner"></span> Loading repositories…</div>';
+}
+
 async function loadRepos() {
   const params = new URLSearchParams({ sort: state.sort, limit: "100" });
   if (state.language) params.set("language", state.language);
+  showTableSpinner();
   try {
     const payload = await fetchJSON(`${API}/repos?${params}`);
     renderReposTable(payload);
