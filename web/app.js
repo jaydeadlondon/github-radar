@@ -214,6 +214,46 @@ async function loadLanguages() {
   }
 }
 
+/* ---------- new this week (risers) ---------- */
+
+async function loadRisers() {
+  const grid = el("riser-grid");
+  try {
+    const risers = await fetchJSON(`${API}/trends?window=7&limit=8`);
+    if (!risers.length) {
+      grid.innerHTML =
+        '<div class="empty">Not enough data yet — run <code>radar snapshot</code> for a few days.</div>';
+      return;
+    }
+    const maxStars = Math.max(...risers.map((r) => r.stargazers_count));
+    grid.innerHTML = risers
+      .map((repo, index) => {
+        const share = maxStars
+          ? Math.round((repo.stargazers_count / maxStars) * 100)
+          : 0;
+        return `
+        <div class="riser-card" data-full-name="${escapeHtml(repo.full_name)}">
+          <div class="rank">#${index + 1}</div>
+          <div class="name">${escapeHtml(repo.full_name)}</div>
+          <div class="delta">★ ${formatNumber(repo.stargazers_count)} stars</div>
+          <div class="bar"><div class="bar-fill" style="width:${share}%"></div></div>
+        </div>`;
+      })
+      .join("");
+    grid.querySelectorAll(".riser-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        state.search = "";
+        el("search").value = "";
+        selectRepo(card.dataset.fullName);
+        loadRepos();
+      });
+    });
+  } catch (err) {
+    grid.innerHTML = `<div class="empty">Failed to load risers.<div class="hint">${escapeHtml(err.message)}</div></div>`;
+    toast(err.message, "error");
+  }
+}
+
 /* ---------- init ---------- */
 
 function init() {
@@ -228,17 +268,19 @@ function init() {
     state.search = event.target.value.trim();
     loadRepos();
   });
-  el("refresh-btn").addEventListener("click", () => {
-    loadRepos();
-  });
   el("period-select").addEventListener("change", (event) => {
     state.period = event.target.value;
     applyPeriod();
+  });
+  el("refresh-btn").addEventListener("click", () => {
+    loadRepos();
+    loadRisers();
   });
 
   refreshStatusBadge();
   loadLanguages();
   loadRepos();
+  loadRisers();
 }
 
 document.addEventListener("DOMContentLoaded", init);

@@ -276,6 +276,26 @@ th.num {
   font-weight: 600;
 }
 
+.riser-card .rank {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin-bottom: 2px;
+}
+
+.riser-card .bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.riser-card .bar-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 2px;
+}
+
 /* Toasts */
 #toasts {
   position: fixed;
