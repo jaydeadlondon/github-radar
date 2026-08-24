@@ -388,6 +388,17 @@ body.light {
   --shadow: 0 2px 8px rgba(140, 149, 159, 0.2);
 }
 
+/* Hover effects only on devices with a pointer */
+@media (hover: hover) {
+  tr.repo-row:hover {
+    background: rgba(88, 166, 255, 0.08);
+  }
+
+  .riser-card:hover {
+    border-color: var(--accent);
+  }
+}
+
 /* Mobile */
 @media (max-width: 860px) {
   .grid {
@@ -402,6 +413,17 @@ body.light {
     padding: 16px;
   }
 
+  .filters {
+    position: sticky;
+    top: 58px;
+    z-index: 5;
+  }
+
+  .filters input,
+  .filters select {
+    flex: 1 1 40%;
+  }
+
   table {
     font-size: 0.8rem;
   }
@@ -409,5 +431,9 @@ body.light {
   th,
   td {
     padding: 8px 10px;
+  }
+
+  #chart {
+    min-height: 240px;
   }
 }
