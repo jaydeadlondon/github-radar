@@ -19,6 +19,32 @@ function baseGrid() {
   return { left: 48, right: 16, top: 16, bottom: 36 };
 }
 
+function refreshChartColors() {
+  CHART_COLORS.line = getComputedStyle(document.body)
+    .getPropertyValue("--accent")
+    .trim();
+  CHART_COLORS.split = getComputedStyle(document.body)
+    .getPropertyValue("--border")
+    .trim();
+  CHART_COLORS.text = getComputedStyle(document.body)
+    .getPropertyValue("--text-muted")
+    .trim();
+  chart.setOption({
+    xAxis: [
+      {
+        axisLine: { lineStyle: { color: CHART_COLORS.split } },
+        axisLabel: { color: CHART_COLORS.text },
+      },
+    ],
+    yAxis: [
+      {
+        axisLine: { lineStyle: { color: CHART_COLORS.split } },
+        axisLabel: { color: CHART_COLORS.text },
+      },
+    ],
+  });
+}
+
 function baseTooltip() {
   return {
     trigger: "axis",

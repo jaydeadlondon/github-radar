@@ -254,12 +254,29 @@ async function loadRisers() {
   }
 }
 
+/* ---------- theme ---------- */
+
+function applyTheme() {
+  document.body.classList.toggle("light", state.theme === "light");
+  el("theme-toggle").textContent = state.theme === "light" ? "☀️" : "🌙";
+  localStorage.setItem("radar-theme", state.theme);
+}
+
+function toggleTheme() {
+  state.theme = state.theme === "light" ? "dark" : "light";
+  applyTheme();
+  refreshChartColors();
+  if (state.selectedRepo && state.selectedHistory.length) {
+    renderStarChart(state.selectedRepo, filterByPeriod(state.selectedHistory));
+  }
+}
+
 /* ---------- init ---------- */
 
 function init() {
-  if (state.theme === "light") document.body.classList.add("light");
-  el("theme-toggle").textContent = state.theme === "light" ? "☀️" : "🌙";
+  applyTheme();
 
+  el("theme-toggle").addEventListener("click", toggleTheme);
   el("language-filter").addEventListener("change", (event) => {
     state.language = event.target.value;
     loadRepos();
@@ -277,6 +294,7 @@ function init() {
     loadRisers();
   });
 
+  refreshChartColors();
   refreshStatusBadge();
   loadLanguages();
   loadRepos();
