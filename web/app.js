@@ -2,20 +2,20 @@ const API = "/api/v1";
 
 const state = {
   language: "",
-  sort: "stars",
-  selectedRepo: null,
-  theme: localStorage.getItem("radar-theme") || "dark",
-  period: "30",
-  selectedHistory: [],
   search: "",
+  sort: "stars",
+  period: "30",
+  selectedRepo: null,
+  selectedHistory: [],
+  theme: localStorage.getItem("radar-theme") || "dark",
 };
 
 const el = (id) => document.getElementById(id);
 
 /* ---------- helpers ---------- */
 
-async function fetchJSON(path) {
-  const response = await fetch(path);
+async function fetchJSON(path, signal) {
+  const response = await fetch(path, { signal });
   if (!response.ok) {
     let message = `HTTP ${response.status}`;
     try {
@@ -133,13 +133,20 @@ function showTableSpinner() {
     '<div class="empty"><span class="spinner"></span> Loading repositories…</div>';
 }
 
+let reposAbortController = null;
+
 async function loadRepos() {
+  if (reposAbortController) reposAbortController.abort();
+  reposAbortController = new AbortController();
   const params = new URLSearchParams({ sort: state.sort, limit: "100" });
   if (state.language) params.set("language", state.language);
   if (state.search) params.set("q", state.search);
   showTableSpinner();
   try {
-    const payload = await fetchJSON(`${API}/repos?${params}`);
+    const payload = await fetchJSON(
+      `${API}/repos?${params}`,
+      reposAbortController.signal,
+    );
     renderReposTable(payload);
     if (
       state.selectedRepo &&
@@ -148,6 +155,7 @@ async function loadRepos() {
       selectRepo(state.selectedRepo);
     }
   } catch (err) {
+    if (err.name === "AbortError") return;
     el("repos-table-wrap").innerHTML =
       `<div class="empty">Failed to load repositories.<div class="hint">${escapeHtml(err.message)}</div></div>`;
     toast(err.message, "error");
@@ -276,18 +284,20 @@ function toggleTheme() {
 function init() {
   applyTheme();
 
-  el("theme-toggle").addEventListener("click", toggleTheme);
   el("language-filter").addEventListener("change", (event) => {
     state.language = event.target.value;
-    loadRepos();
-  });
-  el("search").addEventListener("input", (event) => {
-    state.search = event.target.value.trim();
     loadRepos();
   });
   el("period-select").addEventListener("change", (event) => {
     state.period = event.target.value;
     applyPeriod();
+  });
+  let debounceTimer = null;
+  el("theme-toggle").addEventListener("click", toggleTheme);
+  el("search").addEventListener("input", (event) => {
+    state.search = event.target.value.trim();
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(loadRepos, 300);
   });
   el("refresh-btn").addEventListener("click", () => {
     loadRepos();
