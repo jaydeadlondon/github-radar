@@ -5,6 +5,8 @@ const state = {
   sort: "stars",
   selectedRepo: null,
   theme: localStorage.getItem("radar-theme") || "dark",
+  period: "30",
+  selectedHistory: [],
 };
 
 const el = (id) => document.getElementById(id);
@@ -163,7 +165,8 @@ async function selectRepo(fullName) {
       fetchJSON(`${API}/repos/${fullName}`),
       fetchJSON(`${API}/repos/${fullName}/history`),
     ]);
-    renderStarChart(fullName, history);
+    state.selectedHistory = history;
+    renderStarChart(fullName, filterByPeriod(history));
     const latest = detail.latest_snapshot;
     el("chart-sub").textContent = latest
       ? `${fullName} — ${formatNumber(latest.stargazers_count)} stars, ${formatNumber(latest.forks_count)} forks`
@@ -171,6 +174,20 @@ async function selectRepo(fullName) {
   } catch (err) {
     el("chart-sub").textContent = `${fullName} — failed to load history`;
     toast(err.message, "error");
+  }
+}
+
+/* ---------- period switcher ---------- */
+
+function filterByPeriod(history) {
+  if (!history.length || state.period === "all") return history;
+  const cutoff = Date.now() - Number(state.period) * 24 * 60 * 60 * 1000;
+  return history.filter((s) => new Date(s.observed_at).getTime() >= cutoff);
+}
+
+function applyPeriod() {
+  if (state.selectedRepo && state.selectedHistory.length) {
+    renderStarChart(state.selectedRepo, filterByPeriod(state.selectedHistory));
   }
 }
 
@@ -207,6 +224,10 @@ function init() {
   });
   el("refresh-btn").addEventListener("click", () => {
     loadRepos();
+  });
+  el("period-select").addEventListener("change", (event) => {
+    state.period = event.target.value;
+    applyPeriod();
   });
 
   refreshStatusBadge();

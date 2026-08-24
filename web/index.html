@@ -53,14 +53,15 @@
 
     <main class="content">
       <section class="filters card">
-        <input
-          id="search"
-          type="search"
-          placeholder="Search repositories…"
-          autocomplete="off"
-        />
+        <input id="search" type="search" placeholder="Search repositories…" autocomplete="off">
         <select id="language-filter" aria-label="Filter by language">
           <option value="">All languages</option>
+        </select>
+        <select id="period-select" aria-label="Chart period">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="all">All time</option>
         </select>
         <button id="refresh-btn" class="btn">Refresh</button>
       </section>
