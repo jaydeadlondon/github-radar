@@ -2,6 +2,20 @@
 
 All notable changes to this project.
 
+## [0.4.0] — 2026-08-25
+
+### Added
+
+- Web dashboard served at `/` (HTML/CSS/vanilla JS + locally bundled ECharts)
+- Repositories table with sorting, language filter and debounced search
+- Star-growth line chart with 7/30/90-day/all-time period switcher
+- "New this week" cards from `/trends`
+- Dark/light theme toggle (persisted in localStorage)
+- Loading states, empty states and error toasts
+- Mobile-responsive layout and favicon
+- API: `q` search parameter on `/repos`; contract tests for static assets
+- Tests: dashboard contract, search query (50 tests total)
+
 ## [0.3.0] — 2026-08-20
 
 ### Added

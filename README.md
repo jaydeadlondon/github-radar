@@ -4,7 +4,7 @@ Analytics service that tracks rising stars on GitHub: it collects data about
 repositories, builds star-growth history, and detects projects that are
 "taking off" before everyone else.
 
-> **Status:** version 0.3 — CLI collector, SQLite storage and a REST API.
+> **Status:** version 0.4 — CLI collector, storage, REST API and a web dashboard.
 
 ## Features
 
@@ -83,6 +83,20 @@ curl http://127.0.0.1:8000/api/v1/repos/psf/requests/history?days=30
 Error responses use a consistent shape: `{"detail": "...", "code": 404}`.
 List endpoints return a paginated envelope: `{total, offset, limit, next_offset, items}`.
 
+## Dashboard
+
+The dashboard is served by the API at <http://127.0.0.1:8000/> — start it with
+`radar serve` and open the address.
+
+- Table of tracked repositories with sorting (name / stars / updated)
+- Language filter and live search (debounced)
+- Star-growth line chart for any repository (7 / 30 / 90 days / all time)
+- "New this week" cards — top repos by star growth
+- Dark / light theme (remembered in localStorage), mobile-friendly layout
+
+The frontend is plain HTML/CSS/JS with ECharts bundled locally in
+`web/vendor/` — no external CDN, works fully offline.
+
 ## Tests and linter
 
 ```bash
@@ -101,5 +115,6 @@ src/
 ├── collector/       # CLI (typer), store and snapshot pipeline
 ├── db/              # SQLAlchemy async: engine, models, db helpers
 └── api/             # FastAPI: app, deps, schemas, routes/
+web/                 # dashboard: index.html, app.js, charts.js, styles.css
 alembic/             # database migrations
 ```
