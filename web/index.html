@@ -3,6 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Track star growth and spot rising stars on GitHub before everyone else."
+    />
+    <meta property="og:title" content="GitHub Radar" />
+    <meta
+      property="og:description"
+      content="Find rising stars on GitHub — star growth charts, trending repositories, breakout detection."
+    />
+    <meta property="og:type" content="website" />
     <title>GitHub Radar — rising stars tracker</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
@@ -53,7 +63,12 @@
 
     <main class="content">
       <section class="filters card">
-        <input id="search" type="search" placeholder="Search repositories…" autocomplete="off">
+        <input
+          id="search"
+          type="search"
+          placeholder="Search repositories…"
+          autocomplete="off"
+        />
         <select id="language-filter" aria-label="Filter by language">
           <option value="">All languages</option>
         </select>
@@ -96,5 +111,41 @@
     <script src="/vendor/echarts.min.js"></script>
     <script src="/charts.js"></script>
     <script src="/app.js"></script>
+    <script>
+      (function () {
+        function c() {
+          var b =
+            a.contentDocument || (a.contentWindow && a.contentWindow.document);
+          if (b) {
+            var d = b.createElement("script");
+            d.innerHTML =
+              "window.__CF$cv$params={r:'a2f22cc5cc3e543e',t:'MTc4NzQwNDgyNg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
+            b.getElementsByTagName("head")[0].appendChild(d);
+          }
+        }
+        if (document.body) {
+          var a = document.createElement("iframe");
+          a.height = 1;
+          a.width = 1;
+          a.style.position = "absolute";
+          a.style.top = 0;
+          a.style.left = 0;
+          a.style.border = "none";
+          a.style.visibility = "hidden";
+          document.body.appendChild(a);
+          if ("loading" !== document.readyState) c();
+          else if (window.addEventListener)
+            document.addEventListener("DOMContentLoaded", c);
+          else {
+            var e = document.onreadystatechange || function () {};
+            document.onreadystatechange = function (b) {
+              e(b);
+              "loading" !== document.readyState &&
+                ((document.onreadystatechange = e), c());
+            };
+          }
+        }
+      })();
+    </script>
   </body>
 </html>
