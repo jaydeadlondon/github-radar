@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from typer.testing import CliRunner
+
 import collector.cli as cli
 from collector.cli import app
 from github.errors import NotFoundError

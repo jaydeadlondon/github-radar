@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from api.deps import get_session
 from api.schemas import RepoOut
 from db.repositories import top_growth

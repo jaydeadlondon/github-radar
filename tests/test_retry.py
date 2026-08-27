@@ -1,6 +1,8 @@
 import asyncio
+
 import httpx
 import pytest
+
 from config import settings
 from github.errors import RateLimitError
 

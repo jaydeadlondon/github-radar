@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import func, select
+
 from db.models import Repository, RepoSnapshot
 from db.repositories import (
     create_snapshot,

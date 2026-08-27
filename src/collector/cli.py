@@ -1,15 +1,18 @@
 from __future__ import annotations
+
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import UTC
+
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
+
 from github.client import GitHubClient
 from github.errors import GitHubError
 from github.models import RepoSummary
 from version import __version__
-from datetime import UTC
 
 app = typer.Typer(
     name="radar",
@@ -56,6 +59,7 @@ def serve(
 ) -> None:
     def _impl() -> None:
         import uvicorn
+
         from api.app import create_app
 
         uvicorn.run(create_app(), host=host, port=port, reload=reload)

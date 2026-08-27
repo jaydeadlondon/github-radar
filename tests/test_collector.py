@@ -1,4 +1,5 @@
 from sqlalchemy import func, select
+
 import collector.pipeline as pipeline
 import collector.store as store
 from db.models import Repository, RepoSnapshot

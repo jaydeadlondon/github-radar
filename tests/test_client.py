@@ -1,6 +1,8 @@
 import asyncio
+
 import httpx
 import pytest
+
 from github.errors import NotFoundError
 from github.models import RepoSummary
 
