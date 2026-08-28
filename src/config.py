@@ -19,5 +19,14 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     cors_origins: list[str] = ["*"]
 
+    analytics_rolling_window: int = 14
+    analytics_burst_z: float = 2.5
+    analytics_burst_min_delta: int = 5
+    analytics_burst_min_days: int = 2
+    analytics_history_days: int = 180
+
+    scheduler_enabled: bool = False
+    scheduler_interval_hours: int = 24
+
 
 settings = Settings()
