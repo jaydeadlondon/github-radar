@@ -1,10 +1,9 @@
 from datetime import datetime
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from db.models import Repository, RepoSnapshot
 from github.models import RepoSummary
+from collections.abc import Sequence
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -129,6 +128,30 @@ async def top_growth(
         reverse=True,
     )
     return ranked[:limit]
+
+
+async def fetch_histories(
+    session: AsyncSession,
+    repo_ids: Sequence[int],
+    *,
+    since: datetime,
+) -> dict[int, list[RepoSnapshot]]:
+    ids = list(repo_ids)
+    if not ids:
+        return {}
+    stmt = (
+        select(RepoSnapshot)
+        .where(
+            RepoSnapshot.repo_id.in_(ids),
+            RepoSnapshot.observed_at >= since,
+        )
+        .order_by(RepoSnapshot.repo_id, RepoSnapshot.observed_at)
+    )
+    result = await session.execute(stmt)
+    grouped: dict[int, list[RepoSnapshot]] = {}
+    for snapshot in result.scalars():
+        grouped.setdefault(snapshot.repo_id, []).append(snapshot)
+    return grouped
 
 
 async def get_repository_by_name(

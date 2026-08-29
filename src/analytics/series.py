@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
+
 from .types import DailyPoint
 
 Sample = tuple[datetime, int]
@@ -13,7 +15,7 @@ def build_daily_series(samples: Iterable[Sample]) -> list[DailyPoint]:
 
     last_by_day: dict[date, int] = {}
     for recorded_at, stars in ordered:
-        last_by_day[recorded_at.astimezone(timezone.utc).date()] = stars
+        last_by_day[recorded_at.astimezone(UTC).date()] = stars
 
     series: list[DailyPoint] = []
     previous = last_by_day[min(last_by_day)]

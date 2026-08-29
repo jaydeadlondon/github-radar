@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from collections.abc import Sequence
 from datetime import timedelta
+
 from .series import tail
 from .types import DailyPoint, SlopeResult, VelocityResult
 

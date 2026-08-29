@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from math import sqrt
+
 from .types import BurstEvent, DailyPoint
 
 DEFAULT_ROLLING_WINDOW = 14
