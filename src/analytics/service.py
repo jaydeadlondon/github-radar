@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from analytics.bursts import detect_bursts
 from analytics.series import Sample, build_daily_series
 from analytics.types import BurstEvent, DailyPoint, SlopeResult, VelocityResult
@@ -16,7 +19,7 @@ def _to_samples(snapshots: Sequence[RepoSnapshot]) -> list[Sample]:
 
 
 def _since(history_days: int) -> datetime:
-    return datetime.now(timezone.utc) - timedelta(days=history_days)
+    return datetime.now(UTC) - timedelta(days=history_days)
 
 
 async def repo_series(
@@ -75,7 +78,7 @@ async def leaderboard(
     repos = list((await session.execute(select(Repository))).scalars())
     if not repos:
         return 0, []
-    since = datetime.now(timezone.utc) - timedelta(days=window_days + 1)
+    since = datetime.now(UTC) - timedelta(days=window_days + 1)
     histories = await fetch_histories(session, [r.id for r in repos], since=since)
 
     scored: list[tuple[Repository, VelocityResult, int]] = []

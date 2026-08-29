@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from api.routes import health, history, languages, repos, trends
+from api.routes import analytics, health, history, languages, repos, trends
 from api.schemas import ErrorOut
 from config import settings
 from db.base import engine
@@ -67,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(repos.router, prefix=settings.api_prefix)
     app.include_router(trends.router, prefix=settings.api_prefix)
     app.include_router(languages.router, prefix=settings.api_prefix)
+    app.include_router(analytics.router, prefix=settings.api_prefix)
     app.include_router(health.router)
 
     app.mount(

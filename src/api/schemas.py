@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict
@@ -49,3 +49,31 @@ class RepoDetailOut(BaseModel):
 class ErrorOut(BaseModel):
     detail: str
     code: int
+
+
+class VelocityOut(BaseModel):
+    window_days: int
+    stars_per_day: float
+    stars_gained: int
+    start_day: date
+    end_day: date
+
+
+class SlopeOut(BaseModel):
+    slope: float
+    intercept: float
+    r_squared: float
+    n_points: int
+
+
+class RepoBriefOut(BaseModel):
+    owner: str
+    name: str
+    full_name: str
+    stars: int
+
+
+class RepoVelocityOut(BaseModel):
+    repo: RepoBriefOut
+    velocities: list[VelocityOut]
+    trend: SlopeOut | None = None
