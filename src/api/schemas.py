@@ -77,3 +77,18 @@ class RepoVelocityOut(BaseModel):
     repo: RepoBriefOut
     velocities: list[VelocityOut]
     trend: SlopeOut | None = None
+
+
+class BurstOut(BaseModel):
+    start_day: date
+    end_day: date
+    duration_days: int
+    peak_day: date
+    peak_delta: int
+    total_gained: int
+    severity: float
+
+
+class BurstsOut(BaseModel):
+    items: list[BurstOut]
+    active_burst: bool

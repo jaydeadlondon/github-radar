@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from analytics import service
 from api.deps import get_session
 from api.schemas import (
+    BurstOut,
+    BurstsOut,
     RepoBriefOut,
     RepoVelocityOut,
     SlopeOut,
@@ -73,4 +75,31 @@ async def get_velocity(
             VelocityOut.model_validate(v, from_attributes=True) for v in velocities
         ],
         trend=SlopeOut.model_validate(trend, from_attributes=True) if trend else None,
+    )
+
+
+@router.get("/bursts/{owner}/{name}", response_model=BurstsOut)
+async def get_bursts(
+    owner: str,
+    name: str,
+    days: int | None = Query(default=None, ge=7, le=365),
+    session: AsyncSession = Depends(get_session),
+) -> BurstsOut:
+    full_name = f"{owner}/{name}"
+    repo = await get_repository_by_name(session, full_name)
+    if repo is None:
+        raise HTTPException(status_code=404, detail=f"repository {full_name} not found")
+
+    events, active = await service.repo_bursts(
+        session,
+        repo.id,
+        history_days=days or settings.analytics_history_days,
+        rolling_window=settings.analytics_rolling_window,
+        z_threshold=settings.analytics_burst_z,
+        min_delta=settings.analytics_burst_min_delta,
+        min_duration=settings.analytics_burst_min_days,
+    )
+    return BurstsOut(
+        items=[BurstOut.model_validate(e, from_attributes=True) for e in events],
+        active_burst=active,
     )
