@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,10 +10,12 @@ from api.deps import get_session
 from api.schemas import (
     BurstOut,
     BurstsOut,
+    LeaderboardItemOut,
     RepoBriefOut,
     RepoVelocityOut,
     SlopeOut,
     VelocityOut,
+    Paginated,
 )
 from config import settings
 from db.repositories import get_repository_by_name
@@ -102,4 +106,46 @@ async def get_bursts(
     return BurstsOut(
         items=[BurstOut.model_validate(e, from_attributes=True) for e in events],
         active_burst=active,
+    )
+
+
+LEADERBOARD_WINDOWS = (7, 30, 90)
+
+
+@router.get("/leaderboard", response_model=Paginated[LeaderboardItemOut])
+async def get_leaderboard(
+    window: int = Query(default=7),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> Paginated[LeaderboardItemOut]:
+    if window not in LEADERBOARD_WINDOWS:
+        raise HTTPException(
+            status_code=422,
+            detail="window must be one of 7, 30, 90",
+        )
+    total, scored = await service.leaderboard(
+        session, window_days=window, limit=limit, offset=offset
+    )
+    items: list[LeaderboardItemOut] = []
+    for index, (repo, velocity, stars) in enumerate(scored):
+        owner, _, name = repo.full_name.partition("/")
+        items.append(
+            LeaderboardItemOut(
+                rank=offset + index + 1,
+                owner=owner,
+                name=name,
+                full_name=repo.full_name,
+                language=repo.language,
+                stars=stars,
+                stars_per_day=velocity.stars_per_day,
+                stars_gained=velocity.stars_gained,
+            )
+        )
+    return Paginated(
+        total=total,
+        offset=offset,
+        limit=limit,
+        next_offset=offset + len(items) if offset + len(items) < total else None,
+        items=items,
     )

@@ -92,3 +92,14 @@ class BurstOut(BaseModel):
 class BurstsOut(BaseModel):
     items: list[BurstOut]
     active_burst: bool
+
+
+class LeaderboardItemOut(BaseModel):
+    rank: int
+    owner: str
+    name: str
+    full_name: str
+    language: str | None = None
+    stars: int
+    stars_per_day: float
+    stars_gained: int
