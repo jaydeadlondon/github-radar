@@ -33,6 +33,19 @@ class RepoOut(BaseModel):
     language: str | None = None
     stargazers_count: int = 0
     forks_count: int = 0
+    stars_per_day: float | None = None
+
+
+class TrendOut(RepoOut):
+    stars_per_day: float
+
+
+class VelocityOut(BaseModel):
+    window_days: int
+    stars_per_day: float
+    stars_gained: int
+    start_day: date
+    end_day: date
 
 
 class RepoDetailOut(BaseModel):
@@ -44,19 +57,13 @@ class RepoDetailOut(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     latest_snapshot: SnapshotOut | None = None
+    velocities: list[VelocityOut] = []
+    active_burst: bool = False
 
 
 class ErrorOut(BaseModel):
     detail: str
     code: int
-
-
-class VelocityOut(BaseModel):
-    window_days: int
-    stars_per_day: float
-    stars_gained: int
-    start_day: date
-    end_day: date
 
 
 class SlopeOut(BaseModel):

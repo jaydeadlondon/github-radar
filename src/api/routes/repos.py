@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from analytics import service
 from api.deps import get_repo_or_404, get_session
-from api.schemas import Paginated, RepoDetailOut, RepoOut
+from api.schemas import Paginated, RepoDetailOut, RepoOut, VelocityOut
+from config import settings
 from db.models import Repository
 from db.repositories import get_latest_snapshot, list_repositories
 
@@ -55,6 +57,21 @@ async def get_repo(
     session: AsyncSession = Depends(get_session),
 ) -> RepoDetailOut:
     latest_snapshot = await get_latest_snapshot(session, repo.id)
+    velocities, _trend, _stars = await service.repo_velocity(
+        session,
+        repo.id,
+        windows=(7, 30, 90),
+        history_days=settings.analytics_history_days,
+    )
+    _events, active_burst = await service.repo_bursts(
+        session,
+        repo.id,
+        history_days=settings.analytics_history_days,
+        rolling_window=settings.analytics_rolling_window,
+        z_threshold=settings.analytics_burst_z,
+        min_delta=settings.analytics_burst_min_delta,
+        min_duration=settings.analytics_burst_min_days,
+    )
     return RepoDetailOut(
         id=repo.id,
         full_name=repo.full_name,
@@ -64,4 +81,8 @@ async def get_repo(
         created_at=repo.created_at,
         updated_at=repo.updated_at,
         latest_snapshot=latest_snapshot,
+        velocities=[
+            VelocityOut.model_validate(v, from_attributes=True) for v in velocities
+        ],
+        active_burst=active_burst,
     )

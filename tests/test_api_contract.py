@@ -93,6 +93,9 @@ async def test_detail_payload_contract(api_client, db_session):
     assert snapshot["stargazers_count"] == 900
     assert snapshot["forks_count"] == 10
     assert isinstance(snapshot["observed_at"], str)
+    assert isinstance(body["velocities"], list)
+    assert len(body["velocities"]) == 3
+    assert isinstance(body["active_burst"], bool)
 
 
 async def test_history_payload_contract(api_client, db_session):
@@ -119,6 +122,7 @@ async def test_trends_payload_contract(api_client, db_session):
     items = response.json()
     assert len(items) == 4
     assert all(isinstance(item["stargazers_count"], int) for item in items)
+    assert all(isinstance(item["stars_per_day"], (int, float)) for item in items)
 
 
 async def test_languages_payload_contract(api_client, db_session):

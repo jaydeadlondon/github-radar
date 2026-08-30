@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,11 +9,11 @@ from api.schemas import (
     BurstOut,
     BurstsOut,
     LeaderboardItemOut,
+    Paginated,
     RepoBriefOut,
     RepoVelocityOut,
     SlopeOut,
     VelocityOut,
-    Paginated,
 )
 from config import settings
 from db.repositories import get_repository_by_name
