@@ -266,3 +266,168 @@ def repo(
         console.print(panel)
 
     _run_async(_impl)
+
+
+@app.command()
+def velocity(
+    full_name: str = typer.Argument(
+        ...,
+        metavar="owner/name",
+        help="Tracked repository in owner/name format, e.g. psf/requests.",
+    ),
+    history_days: int = typer.Option(
+        180, "--history-days", min=7, help="How many days of history to use."
+    ),
+) -> None:
+    if "/" not in full_name:
+        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        from analytics import service
+        from db.base import SessionFactory
+        from db.repositories import get_repository_by_name
+
+        async with SessionFactory() as session:
+            repo = await get_repository_by_name(session, full_name)
+            if repo is None:
+                console.print(f"[red]Repository not tracked:[/red] {full_name}")
+                raise typer.Exit(1)
+            velocities, trend, _stars = await service.repo_velocity(
+                session, repo.id, windows=(7, 30, 90), history_days=history_days
+            )
+
+        if not velocities:
+            console.print(
+                f"[yellow]Not enough snapshot history for {full_name}.[/yellow]"
+            )
+            return
+
+        table = Table(title=f"Velocity: {full_name}")
+        table.add_column("Window")
+        table.add_column("Stars/day", justify="right")
+        table.add_column("Gained", justify="right")
+        for v in velocities:
+            table.add_row(
+                f"{v.window_days}d", f"{v.stars_per_day:.2f}", str(v.stars_gained)
+            )
+        console.print(table)
+        if trend is not None:
+            console.print(
+                f"OLS trend: [bold]{trend.slope:.2f}[/bold] stars/day, "
+                f"R² {trend.r_squared:.3f} ({trend.n_points} points)"
+            )
+
+    _run_async(_impl)
+
+
+@app.command()
+def bursts(
+    full_name: str = typer.Argument(
+        ...,
+        metavar="owner/name",
+        help="Tracked repository in owner/name format, e.g. psf/requests.",
+    ),
+    days: int = typer.Option(90, "--days", min=7, help="How many days back to scan."),
+) -> None:
+    if "/" not in full_name:
+        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        from analytics import service
+        from config import settings
+        from db.base import SessionFactory
+        from db.repositories import get_repository_by_name
+
+        async with SessionFactory() as session:
+            repo = await get_repository_by_name(session, full_name)
+            if repo is None:
+                console.print(f"[red]Repository not tracked:[/red] {full_name}")
+                raise typer.Exit(1)
+            events, active = await service.repo_bursts(
+                session,
+                repo.id,
+                history_days=days,
+                rolling_window=settings.analytics_rolling_window,
+                z_threshold=settings.analytics_burst_z,
+                min_delta=settings.analytics_burst_min_delta,
+                min_duration=settings.analytics_burst_min_days,
+            )
+
+        if not events:
+            console.print(
+                f"No bursts detected for {full_name} in the last {days} days."
+            )
+            return
+
+        table = Table(title=f"Bursts: {full_name} (last {days} days)")
+        table.add_column("Start")
+        table.add_column("End")
+        table.add_column("Days", justify="right")
+        table.add_column("Peak", justify="right")
+        table.add_column("Gained", justify="right")
+        table.add_column("Severity", justify="right")
+        for e in events:
+            table.add_row(
+                e.start_day.isoformat(),
+                e.end_day.isoformat(),
+                str(e.duration_days),
+                str(e.peak_delta),
+                str(e.total_gained),
+                f"{e.severity:.1f}x",
+            )
+        console.print(table)
+        if active:
+            console.print(
+                "[red bold]ACTIVE BURST[/red bold] — the repo is taking off right now."
+            )
+
+    _run_async(_impl)
+
+
+@app.command()
+def leaderboard(
+    window: int = typer.Option(
+        7, "--window", "-w", min=7, max=90, help="Time window in days: 7, 30 or 90."
+    ),
+    limit: int = typer.Option(
+        20, "--limit", "-n", min=1, max=100, help="How many repositories to show."
+    ),
+) -> None:
+    if window not in (7, 30, 90):
+        console.print("[red]Error:[/red] --window must be 7, 30 or 90")
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        from analytics import service
+        from db.base import SessionFactory
+
+        async with SessionFactory() as session:
+            total, scored = await service.leaderboard(
+                session, window_days=window, limit=limit, offset=0
+            )
+
+        if not scored:
+            console.print(
+                "[yellow]No tracked repositories with enough snapshot history.[/yellow]"
+            )
+            return
+
+        table = Table(title=f"Fastest growing ({window}d window)")
+        table.add_column("#", justify="right")
+        table.add_column("Repository")
+        table.add_column("Language")
+        table.add_column("Stars", justify="right")
+        table.add_column("Per day", justify="right")
+        for index, (repo, v, stars) in enumerate(scored, start=1):
+            table.add_row(
+                str(index),
+                repo.full_name,
+                repo.language or "—",
+                f"{stars:,}",
+                f"+{v.stars_per_day:.1f}",
+            )
+        console.print(table)
+
+    _run_async(_impl)
