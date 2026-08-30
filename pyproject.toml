@@ -13,7 +13,8 @@ dependencies = [
     "aiosqlite>=0.19",
     "alembic>=1.12",
     "fastapi>=0.110",
-    "uvicorn[standard]>=0.29"
+    "uvicorn[standard]>=0.29",
+    "apscheduler>=3.10,<4",
 ]
 
 [project.optional-dependencies]

@@ -56,11 +56,18 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
     port: int = typer.Option(8000, "--port", help="Bind port."),
     reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes."),
+    with_scheduler: bool = typer.Option(
+        False, "--with-scheduler", help="Run the background snapshot scheduler."
+    ),
 ) -> None:
     def _impl() -> None:
         import uvicorn
 
         from api.app import create_app
+        from config import settings
+
+        if with_scheduler:
+            settings.scheduler_enabled = True
 
         uvicorn.run(create_app(), host=host, port=port, reload=reload)
 

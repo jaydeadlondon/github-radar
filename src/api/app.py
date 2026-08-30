@@ -42,7 +42,24 @@ class DashboardStaticFiles(StaticFiles):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
+
+    if settings.scheduler_enabled:
+        from collector.scheduler import build_scheduler, run_snapshot_job
+
+        scheduler = build_scheduler(settings, run_snapshot_job)
+        scheduler.start()
+        app.state.scheduler = scheduler
+        logger.info(
+            "background scheduler started (every %sh)",
+            settings.scheduler_interval_hours,
+        )
+
     yield
+
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+
     await engine.dispose()
 
 
