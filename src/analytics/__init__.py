@@ -1,5 +1,5 @@
 from .bursts import detect_bursts
-from .series import build_daily_series, tail
+from .series import as_utc, build_daily_series, tail
 from .types import BurstEvent, DailyPoint, SlopeResult, VelocityResult
 from .velocity import (
     multi_window_velocity,
@@ -13,6 +13,7 @@ __all__ = [
     "DailyPoint",
     "SlopeResult",
     "VelocityResult",
+    "as_utc",
     "build_daily_series",
     "detect_bursts",
     "multi_window_velocity",

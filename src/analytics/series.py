@@ -8,14 +8,20 @@ from .types import DailyPoint
 Sample = tuple[datetime, int]
 
 
+def as_utc(moment: datetime) -> datetime:
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
+
+
 def build_daily_series(samples: Iterable[Sample]) -> list[DailyPoint]:
-    ordered = sorted(samples, key=lambda sample: sample[0])
+    ordered = sorted(samples, key=lambda sample: as_utc(sample[0]))
     if not ordered:
         return []
 
     last_by_day: dict[date, int] = {}
     for recorded_at, stars in ordered:
-        last_by_day[recorded_at.astimezone(UTC).date()] = stars
+        last_by_day[as_utc(recorded_at).date()] = stars
 
     series: list[DailyPoint] = []
     previous = last_by_day[min(last_by_day)]
