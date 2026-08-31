@@ -437,3 +437,136 @@ body.light {
     min-height: 240px;
   }
 }
+
+/* --- analytics: leaderboard, velocity badges, burst strip --- */
+
+#leaderboard-section {
+  margin-top: 24px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.window-switch {
+  display: flex;
+  gap: 4px;
+}
+
+.window-switch button {
+  border: 1px solid rgba(128, 139, 155, 0.35);
+  background: transparent;
+  color: inherit;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.window-switch button.active {
+  background: rgba(46, 160, 67, 0.2);
+  border-color: #2ea043;
+  color: #3fb950;
+}
+
+#leaderboard-table-wrap table {
+  width: 100%;
+}
+#leaderboard-table-wrap tr.lb-row {
+  cursor: pointer;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-velocity {
+  background: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+}
+
+.badge-trend {
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+}
+
+.badge-burst {
+  background: rgba(255, 123, 114, 0.15);
+  color: #ff7b72;
+}
+
+.badges-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.mini-velocity {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+  white-space: nowrap;
+}
+
+.burst-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 14px;
+}
+
+.strip-label {
+  font-size: 11px;
+  color: rgba(139, 148, 158, 0.9);
+  white-space: nowrap;
+}
+
+.strip-track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(139, 148, 158, 0.12);
+}
+
+.burst-segment {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 4px;
+  background: rgba(255, 123, 114, 0.55);
+}
+
+body.light .badge-velocity {
+  color: #1a7f37;
+}
+body.light .badge-trend {
+  color: #0969da;
+}
+body.light .badge-burst {
+  color: #cf222e;
+}
+body.light .mini-velocity {
+  color: #1a7f37;
+}
+body.light .window-switch button.active {
+  color: #1a7f37;
+  border-color: #1a7f37;
+}
+body.light .burst-segment {
+  background: rgba(207, 34, 46, 0.45);
+}
