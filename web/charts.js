@@ -1,4 +1,4 @@
-/* GitHub Radar dashboard — ECharts helpers (v0.4). */
+/* GitHub Radar dashboard — ECharts helpers (v0.5). */
 
 /* Global state shared with app.js (defined in app.js). */
 /* eslint-disable no-undef */

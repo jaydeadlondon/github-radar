@@ -2,6 +2,32 @@
 
 All notable changes to this project.
 
+## [0.5.0] — 2026-08-31
+
+### Added
+
+- `analytics` package: daily star series built from raw snapshots, sliding-window
+  velocity, linear-regression (OLS) trend slope with R²
+- Burst detection: rolling mean/std z-scores, grouping of consecutive spikes into
+  events with duration, peak day and severity score
+- Analytics service layer on top of the DB and a batch history query
+  (`fetch_histories`) that loads several repositories in one round trip
+- REST API under `/api/v1/analytics`:
+  - `GET /analytics/velocity/{owner}/{name}` (custom `windows`, `days`)
+  - `GET /analytics/bursts/{owner}/{name}` (`days`, active-burst flag)
+  - `GET /analytics/leaderboard` (paginated, `window` 7/30/90)
+- CLI commands: `radar velocity`, `radar bursts`, `radar leaderboard`
+- Background APScheduler job: periodic snapshots inside the API lifespan,
+  toggled by `RADAR_SCHEDULER_ENABLED` / `RADAR_SCHEDULER_INTERVAL_HOURS`
+- Tunable analytics settings in `.env`: rolling window, z-threshold, minimum
+  delta, minimum burst length and history depth
+
+### Changed
+
+- `/repos/{owner}/{name}` detail now returns `velocities` and `active_burst`
+- `/trends` items now carry `stars_per_day` (new `TrendOut` schema)
+- Codebase reformatted with ruff (100-column line length)
+
 ## [0.4.0] — 2026-08-25
 
 ### Added

@@ -57,7 +57,7 @@ def regression_slope(series: Sequence[DailyPoint]) -> SlopeResult | None:
     sxx = sum((x - x_mean) ** 2 for x in xs)
     if sxx == 0:
         return None
-    sxy = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys))
+    sxy = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys, strict=True))
     slope = sxy / sxx
     intercept = y_mean - slope * x_mean
 
@@ -65,7 +65,9 @@ def regression_slope(series: Sequence[DailyPoint]) -> SlopeResult | None:
     if ss_tot == 0:
         r_squared = 1.0 if slope == 0 else 0.0
     else:
-        ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in zip(xs, ys))
+        ss_res = sum(
+            (y - (slope * x + intercept)) ** 2 for x, y in zip(xs, ys, strict=True)
+        )
         r_squared = 1 - ss_res / ss_tot
 
     return SlopeResult(
