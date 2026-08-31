@@ -39,3 +39,27 @@ def tail(series: Sequence[DailyPoint], days: int) -> list[DailyPoint]:
     if days <= 0:
         return []
     return list(series[-days:])
+
+
+def moving_average(values: Sequence[float], window: int) -> list[float | None]:
+    if window <= 1:
+        return [float(value) for value in values]
+    averages: list[float | None] = []
+    running = 0.0
+    for index, value in enumerate(values):
+        running += value
+        if index >= window:
+            running -= values[index - window]
+        if index + 1 < window:
+            averages.append(None)
+        else:
+            averages.append(round(running / window, 2))
+    return averages
+
+
+def smooth_stars(series: Sequence[DailyPoint], window: int) -> list[float | None]:
+    return moving_average([point.stars for point in series], window)
+
+
+def smooth_deltas(series: Sequence[DailyPoint], window: int) -> list[float | None]:
+    return moving_average([point.delta for point in series], window)

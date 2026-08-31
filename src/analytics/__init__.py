@@ -9,6 +9,9 @@ from .compare import (
 from .series import (
     as_utc,
     build_daily_series,
+    moving_average,
+    smooth_deltas,
+    smooth_stars,
     tail,
 )
 from .types import BurstEvent, DailyPoint, SlopeResult, VelocityResult
@@ -31,9 +34,12 @@ __all__ = [
     "build_daily_series",
     "day_grid",
     "detect_bursts",
+    "moving_average",
     "multi_window_velocity",
     "normalize",
     "regression_slope",
+    "smooth_deltas",
+    "smooth_stars",
     "tail",
     "trend_summary",
     "window_velocity",
