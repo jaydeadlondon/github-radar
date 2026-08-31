@@ -20,7 +20,9 @@ async def repo_history(
     repo: Repository = Depends(get_repo_or_404),
     since: datetime | None = Query(None, description="Start of the time window"),
     until: datetime | None = Query(None, description="End of the time window"),
-    limit: int = Query(None, ge=1, le=1000, description="Maximum number of snapshots"),
+    limit: int | None = Query(
+        None, ge=1, le=1000, description="Maximum number of snapshots"
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> list[SnapshotOut]:
     if since is not None and until is not None and since > until:
