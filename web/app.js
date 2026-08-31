@@ -98,7 +98,7 @@ function renderReposTable(payload) {
         <th class="sortable" data-sort="name">Repository ${arrow("name")}</th>
         <th>Language</th>
         <th class="sortable num" data-sort="stars">Stars ${arrow("stars")}</th>
-        <th class="sortable num" data-sort="updated">Updated ${arrow("updated")}</th>
+        <th class="num">Forks</th>
       </tr>
     </thead>
     <tbody>
