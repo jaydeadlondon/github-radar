@@ -7,7 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analytics.bursts import detect_bursts
-from analytics.series import Sample, build_daily_series
+from analytics.series import (
+    Sample,
+    build_daily_series,
+    smooth_deltas,
+    smooth_stars,
+)
 from analytics.types import BurstEvent, DailyPoint, SlopeResult, VelocityResult
 from analytics.velocity import multi_window_velocity, trend_summary, window_velocity
 from db.models import Repository, RepoSnapshot
@@ -30,6 +35,24 @@ async def repo_series(
 ) -> list[DailyPoint]:
     histories = await fetch_histories(session, [repo_id], since=_since(history_days))
     return build_daily_series(_to_samples(histories.get(repo_id, [])))
+
+
+async def repo_smoothed_series(
+    session: AsyncSession,
+    repo_id: int,
+    *,
+    history_days: int,
+    smooth_window: int = 0,
+) -> tuple[list[DailyPoint], list[float | None], list[float | None]]:
+    series = await repo_series(session, repo_id, history_days=history_days)
+    if smooth_window <= 1 or not series:
+        empty: list[float | None] = [None] * len(series)
+        return series, empty, list(empty)
+    return (
+        series,
+        smooth_stars(series, smooth_window),
+        smooth_deltas(series, smooth_window),
+    )
 
 
 async def repo_velocity(

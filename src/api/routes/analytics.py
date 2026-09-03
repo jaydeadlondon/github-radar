@@ -11,11 +11,14 @@ from api.schemas import (
     LeaderboardItemOut,
     Paginated,
     RepoBriefOut,
+    RepoSeriesOut,
     RepoVelocityOut,
+    SeriesPointOut,
     SlopeOut,
     VelocityOut,
 )
 from config import settings
+from db.models import Repository
 from db.repositories import get_repository_by_name
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -53,10 +56,7 @@ async def get_velocity(
     session: AsyncSession = Depends(get_session),
 ) -> RepoVelocityOut:
     window_list = _parse_windows(windows)
-    full_name = f"{owner}/{name}"
-    repo = await get_repository_by_name(session, full_name)
-    if repo is None:
-        raise HTTPException(status_code=404, detail=f"repository {full_name} not found")
+    repo = await _load_repo(session, owner, name)
 
     velocities, trend, latest_stars = await service.repo_velocity(
         session,
@@ -80,6 +80,52 @@ async def get_velocity(
     )
 
 
+async def _load_repo(session: AsyncSession, owner: str, name: str) -> Repository:
+    full_name = f"{owner}/{name}"
+    repo = await get_repository_by_name(session, full_name)
+    if repo is None:
+        raise HTTPException(status_code=404, detail=f"repository {full_name} not found")
+    return repo
+
+
+@router.get("/series/{owner}/{name}", response_model=RepoSeriesOut)
+async def get_series(
+    owner: str,
+    name: str,
+    days: int | None = Query(default=None, ge=7, le=365),
+    smooth: int = Query(default=0, ge=0, le=90, description="Moving-average window"),
+    session: AsyncSession = Depends(get_session),
+) -> RepoSeriesOut:
+    repo = await _load_repo(session, owner, name)
+    series, stars_avg, delta_avg = await service.repo_smoothed_series(
+        session,
+        repo.id,
+        history_days=days or settings.analytics_history_days,
+        smooth_window=smooth,
+    )
+
+    owner_part, _, name_part = repo.full_name.partition("/")
+    return RepoSeriesOut(
+        repo=RepoBriefOut(
+            owner=owner_part,
+            name=name_part,
+            full_name=repo.full_name,
+            stars=series[-1].stars if series else 0,
+        ),
+        smooth_window=smooth,
+        points=[
+            SeriesPointOut(
+                day=point.day,
+                stars=point.stars,
+                delta=point.delta,
+                stars_avg=stars_avg[index],
+                delta_avg=delta_avg[index],
+            )
+            for index, point in enumerate(series)
+        ],
+    )
+
+
 @router.get("/bursts/{owner}/{name}", response_model=BurstsOut)
 async def get_bursts(
     owner: str,
@@ -87,10 +133,7 @@ async def get_bursts(
     days: int | None = Query(default=None, ge=7, le=365),
     session: AsyncSession = Depends(get_session),
 ) -> BurstsOut:
-    full_name = f"{owner}/{name}"
-    repo = await get_repository_by_name(session, full_name)
-    if repo is None:
-        raise HTTPException(status_code=404, detail=f"repository {full_name} not found")
+    repo = await _load_repo(session, owner, name)
 
     events, active = await service.repo_bursts(
         session,

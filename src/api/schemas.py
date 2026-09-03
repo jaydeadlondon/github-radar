@@ -86,6 +86,20 @@ class RepoVelocityOut(BaseModel):
     trend: SlopeOut | None = None
 
 
+class SeriesPointOut(BaseModel):
+    day: date
+    stars: int
+    delta: int
+    stars_avg: float | None = None
+    delta_avg: float | None = None
+
+
+class RepoSeriesOut(BaseModel):
+    repo: RepoBriefOut
+    smooth_window: int
+    points: list[SeriesPointOut]
+
+
 class BurstOut(BaseModel):
     start_day: date
     end_day: date
