@@ -7,6 +7,8 @@ from analytics import service
 from api.deps import get_session
 from api.schemas import (
     BurstOut,
+    CompareOut,
+    CompareSeriesOut,
     BurstsOut,
     LeaderboardItemOut,
     Paginated,
@@ -151,6 +153,59 @@ async def get_bursts(
 
 
 LEADERBOARD_WINDOWS = (7, 30, 90)
+MAX_COMPARE = 5
+
+
+def _parse_repo_names(raw: str) -> list[str]:
+    names = [part.strip() for part in raw.split(",") if part.strip()]
+    if not names or len(names) > MAX_COMPARE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"provide between 1 and {MAX_COMPARE} repositories",
+        )
+    if any("/" not in name for name in names):
+        raise HTTPException(
+            status_code=422,
+            detail="each repository must be given as owner/name",
+        )
+    return list(dict.fromkeys(names))
+
+
+@router.get("/compare", response_model=CompareOut)
+async def compare(
+    repos: str = Query(..., description="Comma-separated list of owner/name"),
+    window: int = Query(default=30, ge=7, le=365),
+    mode: str = Query(default="absolute", pattern="^(absolute|indexed|percent)$"),
+    session: AsyncSession = Depends(get_session),
+) -> CompareOut:
+    names = _parse_repo_names(repos)
+
+    tracked: list[Repository] = []
+    missing: list[str] = []
+    for name in names:
+        repo = await get_repository_by_name(session, name)
+        if repo is None:
+            missing.append(name)
+        else:
+            tracked.append(repo)
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"repositories not found: {', '.join(missing)}",
+        )
+
+    days, comparison = await service.compare_repos(
+        session, tracked, window_days=window, mode=mode
+    )
+    return CompareOut(
+        mode=mode,
+        window_days=window,
+        days=days,
+        series=[
+            CompareSeriesOut(full_name=item.key, values=item.values)
+            for item in comparison
+        ],
+    )
 
 
 @router.get("/leaderboard", response_model=Paginated[LeaderboardItemOut])

@@ -100,6 +100,18 @@ class RepoSeriesOut(BaseModel):
     points: list[SeriesPointOut]
 
 
+class CompareSeriesOut(BaseModel):
+    full_name: str
+    values: list[float | None]
+
+
+class CompareOut(BaseModel):
+    mode: str
+    window_days: int
+    days: list[date]
+    series: list[CompareSeriesOut]
+
+
 class BurstOut(BaseModel):
     start_day: date
     end_day: date

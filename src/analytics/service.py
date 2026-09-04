@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analytics.bursts import detect_bursts
+from analytics.compare import ComparisonSeries, build_comparison
 from analytics.series import (
     Sample,
     build_daily_series,
@@ -91,12 +92,32 @@ async def repo_bursts(
     return events, active
 
 
+async def compare_repos(
+    session: AsyncSession,
+    repos: Sequence[Repository],
+    *,
+    window_days: int,
+    mode: str = "absolute",
+) -> tuple[list[date], list[ComparisonSeries]]:
+    if not repos:
+        return [], []
+    histories = await fetch_histories(
+        session, [repo.id for repo in repos], since=_since(window_days)
+    )
+    series_by_name = {
+        repo.full_name: build_daily_series(_to_samples(histories.get(repo.id, [])))
+        for repo in repos
+    }
+    return build_comparison(series_by_name, mode=mode)
+
+
 async def leaderboard(
     session: AsyncSession,
     *,
     window_days: int,
     limit: int,
     offset: int,
+    language: str | None = None,
 ) -> tuple[int, list[tuple[Repository, VelocityResult, int]]]:
     repos = list((await session.execute(select(Repository))).scalars())
     if not repos:
