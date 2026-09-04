@@ -211,6 +211,7 @@ async def compare(
 @router.get("/leaderboard", response_model=Paginated[LeaderboardItemOut])
 async def get_leaderboard(
     window: int = Query(default=7),
+    language: str | None = Query(default=None, description="Filter by language"),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
@@ -221,7 +222,11 @@ async def get_leaderboard(
             detail="window must be one of 7, 30, 90",
         )
     total, scored = await service.leaderboard(
-        session, window_days=window, limit=limit, offset=offset
+        session,
+        window_days=window,
+        limit=limit,
+        offset=offset,
+        language=language,
     )
     items: list[LeaderboardItemOut] = []
     for index, (repo, velocity, stars) in enumerate(scored):

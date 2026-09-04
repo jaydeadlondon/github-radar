@@ -119,7 +119,10 @@ async def leaderboard(
     offset: int,
     language: str | None = None,
 ) -> tuple[int, list[tuple[Repository, VelocityResult, int]]]:
-    repos = list((await session.execute(select(Repository))).scalars())
+    stmt = select(Repository)
+    if language:
+        stmt = stmt.where(Repository.language == language)
+    repos = list((await session.execute(stmt)).scalars())
     if not repos:
         return 0, []
     since = datetime.now(UTC) - timedelta(days=window_days + 1)
