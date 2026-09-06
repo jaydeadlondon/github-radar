@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from analytics.series import build_daily_series, tail
 
 
 def _dt(day: int, hour: int = 12) -> datetime:
-    return datetime(2026, 8, day, hour, tzinfo=timezone.utc)
+    return datetime(2026, 8, day, hour, tzinfo=UTC)
 
 
 def test_empty_input_returns_empty_series():

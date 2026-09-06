@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from analytics.series import build_daily_series
 from analytics.velocity import (
@@ -13,7 +13,7 @@ def _series(deltas):
     stars = 1000
     for i, delta in enumerate(deltas, start=1):
         stars += delta
-        samples.append((datetime(2026, 8, i, 12, tzinfo=timezone.utc), stars))
+        samples.append((datetime(2026, 8, i, 12, tzinfo=UTC), stars))
     return build_daily_series(samples)
 
 

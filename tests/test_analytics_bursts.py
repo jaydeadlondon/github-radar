@@ -1,11 +1,11 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from analytics.bursts import detect_bursts, flag_burst_days
 from analytics.series import build_daily_series
 
 
 def _series(deltas):
-    base = datetime(2026, 8, 1, 12, tzinfo=timezone.utc)
+    base = datetime(2026, 8, 1, 12, tzinfo=UTC)
     samples = []
     stars = 1000
     for i, delta in enumerate(deltas):
