@@ -8,8 +8,6 @@ DAY = timedelta(days=1)
 
 
 async def _seed_analytics_db(db_session) -> None:
-    """acme/rocket: +2/day ровно, всплеск +40/day пять дней (16..20 дней
-    назад). acme/slow: +1/day ровно. По 60 дней истории."""
     rocket = await upsert_repository(
         db_session,
         RepoSummary(
