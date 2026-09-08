@@ -1,22 +1,20 @@
 const API = "/api/v1";
-
 const state = {
   language: "",
   search: "",
   sort: "stars",
   period: "30",
+  chartMode: "stars",
   selectedRepo: null,
-  selectedHistory: [],
+  series: null,
   leaderboardWindow: "7",
   leaderboardCache: null,
   velocityMap: new Map(),
   theme: localStorage.getItem("radar-theme") || "dark",
 };
-
 const el = (id) => document.getElementById(id);
-
+const periodDays = () => (state.period === "all" ? 365 : Number(state.period));
 /* ---------- helpers ---------- */
-
 async function fetchJSON(path, signal) {
   const response = await fetch(path, { signal });
   if (!response.ok) {
@@ -31,7 +29,6 @@ async function fetchJSON(path, signal) {
   }
   return response.json();
 }
-
 function toast(message, type = "") {
   const container = el("toasts");
   const node = document.createElement("div");
@@ -40,11 +37,9 @@ function toast(message, type = "") {
   container.appendChild(node);
   setTimeout(() => node.remove(), 5000);
 }
-
 function formatNumber(value) {
   return new Intl.NumberFormat("en-US", { notation: "compact" }).format(value);
 }
-
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -52,9 +47,7 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
-
 /* ---------- status badge ---------- */
-
 async function refreshStatusBadge() {
   const badge = el("status-badge");
   try {
@@ -65,9 +58,7 @@ async function refreshStatusBadge() {
     badge.textContent = "● offline";
   }
 }
-
 /* ---------- repositories table ---------- */
-
 function renderReposTable(payload) {
   const wrap = el("repos-table-wrap");
   if (!payload.items.length) {
@@ -86,7 +77,6 @@ function renderReposTable(payload) {
     return;
   }
   el("risers-section").style.display = "";
-
   const arrow = (key) =>
     state.sort === key
       ? '<span class="arrow">↓</span>'
@@ -121,7 +111,6 @@ function renderReposTable(payload) {
   `;
   wrap.innerHTML = "";
   wrap.appendChild(table);
-
   table.querySelectorAll("th.sortable").forEach((th) => {
     th.addEventListener("click", () => {
       state.sort = th.dataset.sort;
@@ -134,14 +123,11 @@ function renderReposTable(payload) {
     });
   });
 }
-
 function showTableSpinner() {
   el("repos-table-wrap").innerHTML =
     '<div class="empty"><span class="spinner"></span> Loading repositories…</div>';
 }
-
 let reposAbortController = null;
-
 async function loadRepos() {
   if (reposAbortController) reposAbortController.abort();
   reposAbortController = new AbortController();
@@ -168,24 +154,22 @@ async function loadRepos() {
     toast(err.message, "error");
   }
 }
-
 /* ---------- repo detail + chart ---------- */
-
 async function selectRepo(fullName) {
   state.selectedRepo = fullName;
   document.querySelectorAll("tr.repo-row").forEach((row) => {
     row.classList.toggle("selected", row.dataset.fullName === fullName);
   });
-  el("chart-sub").textContent = `${fullName} — star history`;
+  el("chart-sub").textContent = `${fullName} — loading…`;
   try {
-    const [detail, history, velocity, bursts] = await Promise.all([
+    const [detail, series, velocity, bursts] = await Promise.all([
       fetchJSON(`${API}/repos/${fullName}`),
-      fetchJSON(`${API}/repos/${fullName}/history`),
+      fetchJSON(`${API}/analytics/series/${fullName}?days=${periodDays()}`),
       loadVelocity(fullName),
       loadBursts(fullName),
     ]);
-    state.selectedHistory = history;
-    renderStarChart(fullName, filterByPeriod(history));
+    state.series = series;
+    renderChart();
     renderVelocityBadges(velocity);
     renderBurstStrip(bursts);
     const latest = detail.latest_snapshot;
@@ -193,13 +177,27 @@ async function selectRepo(fullName) {
       ? `${fullName} — ${formatNumber(latest.stargazers_count)} stars, ${formatNumber(latest.forks_count)} forks`
       : `${fullName} — no data yet`;
   } catch (err) {
+    state.series = null;
     el("chart-sub").textContent = `${fullName} — failed to load history`;
     toast(err.message, "error");
   }
 }
-
+function renderChart() {
+  if (!state.selectedRepo) {
+    emptyChart("Select a repository to see its star history");
+    return;
+  }
+  const points = state.series ? state.series.points : [];
+  renderSeriesChart(state.selectedRepo, points, { mode: state.chartMode });
+}
+function setChartMode(mode) {
+  state.chartMode = mode;
+  document.querySelectorAll("#chart-mode button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === mode);
+  });
+  renderChart();
+}
 /* ---------- velocity + bursts (best-effort, never break the chart) ---------- */
-
 async function loadVelocity(fullName) {
   const [owner, name] = fullName.split("/");
   try {
@@ -210,7 +208,6 @@ async function loadVelocity(fullName) {
     return null;
   }
 }
-
 async function loadBursts(fullName) {
   const [owner, name] = fullName.split("/");
   try {
@@ -221,7 +218,6 @@ async function loadBursts(fullName) {
     return null;
   }
 }
-
 function renderVelocityBadges(velocity) {
   const box = el("velocity-badges");
   if (!velocity || !velocity.velocities.length) {
@@ -240,7 +236,6 @@ function renderVelocityBadges(velocity) {
   }
   box.innerHTML = badges.join("");
 }
-
 function renderBurstStrip(bursts) {
   const strip = el("burst-strip");
   if (!bursts) {
@@ -274,23 +269,11 @@ function renderBurstStrip(bursts) {
   }
   strip.innerHTML = parts.join("");
 }
-
 /* ---------- period switcher ---------- */
-
-function filterByPeriod(history) {
-  if (!history.length || state.period === "all") return history;
-  const cutoff = Date.now() - Number(state.period) * 24 * 60 * 60 * 1000;
-  return history.filter((s) => new Date(s.observed_at).getTime() >= cutoff);
-}
-
 function applyPeriod() {
-  if (state.selectedRepo && state.selectedHistory.length) {
-    renderStarChart(state.selectedRepo, filterByPeriod(state.selectedHistory));
-  }
+  if (state.selectedRepo) selectRepo(state.selectedRepo);
 }
-
 /* ---------- language filter ---------- */
-
 async function loadLanguages() {
   try {
     const languages = await fetchJSON(`${API}/languages`);
@@ -309,9 +292,7 @@ async function loadLanguages() {
     toast(`Languages: ${err.message}`, "warn");
   }
 }
-
 /* ---------- new this week (risers) ---------- */
-
 async function loadRisers() {
   const grid = el("riser-grid");
   try {
@@ -349,9 +330,7 @@ async function loadRisers() {
     toast(err.message, "error");
   }
 }
-
 /* ---------- fastest growing (leaderboard) ---------- */
-
 function renderLeaderboard(payload) {
   const wrap = el("leaderboard-table-wrap");
   if (!payload.items.length) {
@@ -396,7 +375,6 @@ function renderLeaderboard(payload) {
     });
   });
 }
-
 async function loadLeaderboard() {
   const wrap = el("leaderboard-table-wrap");
   wrap.innerHTML =
@@ -421,29 +399,21 @@ async function loadLeaderboard() {
     toast(err.message, "error");
   }
 }
-
 /* ---------- theme ---------- */
-
 function applyTheme() {
   document.body.classList.toggle("light", state.theme === "light");
   el("theme-toggle").textContent = state.theme === "light" ? "☀️" : "🌙";
   localStorage.setItem("radar-theme", state.theme);
 }
-
 function toggleTheme() {
   state.theme = state.theme === "light" ? "dark" : "light";
   applyTheme();
   refreshChartColors();
-  if (state.selectedRepo && state.selectedHistory.length) {
-    renderStarChart(state.selectedRepo, filterByPeriod(state.selectedHistory));
-  }
+  renderChart();
 }
-
 /* ---------- init ---------- */
-
 function init() {
   applyTheme();
-
   el("language-filter").addEventListener("change", (event) => {
     state.language = event.target.value;
     loadRepos();
@@ -451,6 +421,11 @@ function init() {
   el("period-select").addEventListener("change", (event) => {
     state.period = event.target.value;
     applyPeriod();
+  });
+  el("chart-mode").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-mode]");
+    if (!button || button.disabled) return;
+    setChartMode(button.dataset.mode);
   });
   el("leaderboard-window").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-window]");
@@ -473,7 +448,6 @@ function init() {
     loadRisers();
     loadLeaderboard();
   });
-
   refreshChartColors();
   refreshStatusBadge();
   loadLanguages();
@@ -481,5 +455,4 @@ function init() {
   loadRepos();
   loadRisers();
 }
-
 document.addEventListener("DOMContentLoaded", init);

@@ -1,24 +1,18 @@
 /* GitHub Radar dashboard — ECharts helpers (v0.5). */
-
 /* Global state shared with app.js (defined in app.js). */
 /* eslint-disable no-undef */
-
 const chart = echarts.init(document.getElementById("chart"));
-
 const AXIS_TEXT_COLOR = getComputedStyle(document.body)
   .getPropertyValue("--text-muted")
   .trim();
-
 const CHART_COLORS = {
   line: getComputedStyle(document.body).getPropertyValue("--accent").trim(),
   split: getComputedStyle(document.body).getPropertyValue("--border").trim(),
   text: AXIS_TEXT_COLOR,
 };
-
 function baseGrid() {
   return { left: 48, right: 16, top: 16, bottom: 36 };
 }
-
 function refreshChartColors() {
   CHART_COLORS.line = getComputedStyle(document.body)
     .getPropertyValue("--accent")
@@ -44,7 +38,6 @@ function refreshChartColors() {
     ],
   });
 }
-
 function baseTooltip() {
   return {
     trigger: "axis",
@@ -54,7 +47,6 @@ function baseTooltip() {
     valueFormatter: (value) => new Intl.NumberFormat("en-US").format(value),
   };
 }
-
 function emptyChart(message) {
   chart.clear();
   chart.setOption({
@@ -70,26 +62,25 @@ function emptyChart(message) {
     },
   });
 }
-
 /**
- * Render a line chart of star counts over time.
- * @param {string} repoName - repository full name (for the title)
- * @param {Array<{observed_at: string, stargazers_count: number}>} snapshots
+ * Render the daily star series produced by /api/v1/analytics/series.
+ * @param {string} repoName - repository full name (for the tooltip)
+ * @param {Array<{day: string, stars: number, delta: number}>} points
+ * @param {{mode?: string}} options
  */
-function renderStarChart(repoName, snapshots) {
-  if (!snapshots.length) {
+function renderSeriesChart(repoName, points, options = {}) {
+  if (!points.length) {
     emptyChart("No snapshots yet for this repository");
     return;
   }
-  const dates = snapshots.map((s) => s.observed_at.slice(0, 10));
-  const stars = snapshots.map((s) => s.stargazers_count);
-
+  const days = points.map((point) => point.day);
+  chart.clear();
   chart.setOption({
     tooltip: baseTooltip(),
     grid: baseGrid(),
     xAxis: {
       type: "category",
-      data: dates,
+      data: days,
       boundaryGap: false,
       axisLine: { lineStyle: { color: CHART_COLORS.split } },
       axisLabel: { color: CHART_COLORS.text },
@@ -102,35 +93,39 @@ function renderStarChart(repoName, snapshots) {
       splitLine: { lineStyle: { color: CHART_COLORS.split, opacity: 0.5 } },
     },
     series: [
-      {
-        name: repoName,
-        type: "line",
-        data: stars,
-        smooth: true,
-        symbol: "circle",
-        symbolSize: 5,
-        lineStyle: { color: CHART_COLORS.line, width: 2 },
-        itemStyle: { color: CHART_COLORS.line },
-        areaStyle: {
-          color: {
-            type: "linear",
-            x: 0,
-            y: 0,
-            x2: 0,
-            y2: 1,
-            colorStops: [
-              { offset: 0, color: "rgba(88,166,255,0.25)" },
-              { offset: 1, color: "rgba(88,166,255,0.02)" },
-            ],
-          },
-        },
-      },
+      starLineSeries(
+        repoName,
+        points.map((point) => point.stars),
+      ),
     ],
   });
 }
-
+function starLineSeries(name, values) {
+  return {
+    name,
+    type: "line",
+    data: values,
+    smooth: true,
+    symbol: "circle",
+    symbolSize: 5,
+    lineStyle: { color: CHART_COLORS.line, width: 2 },
+    itemStyle: { color: CHART_COLORS.line },
+    areaStyle: {
+      color: {
+        type: "linear",
+        x: 0,
+        y: 0,
+        x2: 0,
+        y2: 1,
+        colorStops: [
+          { offset: 0, color: "rgba(88,166,255,0.25)" },
+          { offset: 1, color: "rgba(88,166,255,0.02)" },
+        ],
+      },
+    },
+  };
+}
 function resizeChart() {
   chart.resize();
 }
-
 window.addEventListener("resize", resizeChart);

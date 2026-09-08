@@ -60,7 +60,6 @@
         <span class="status-badge" id="status-badge">loading…</span>
       </div>
     </header>
-
     <main class="content">
       <section class="filters card">
         <input
@@ -80,7 +79,6 @@
         </select>
         <button id="refresh-btn" class="btn">Refresh</button>
       </section>
-
       <section class="grid">
         <div class="card">
           <h2>Tracked repositories</h2>
@@ -88,80 +86,60 @@
             <div class="empty">Loading…</div>
           </div>
         </div>
-
         <div class="card chart-panel">
-          <div class="chart-title">Star growth</div>
-          <div class="chart-sub" id="chart-sub">
-            Select a repository to see its history
+          <div class="chart-head">
+            <div>
+              <div class="chart-title">Star growth</div>
+              <div class="chart-sub" id="chart-sub">
+                Select a repository to see its history
+              </div>
+              <div class="badges-row" id="velocity-badges"></div>
+              <div class="burst-strip-row" id="burst-strip"></div>
+            </div>
+            <div class="chart-toolbar">
+              <div
+                class="seg"
+                id="chart-mode"
+                role="group"
+                aria-label="Chart mode"
+              >
+                <button class="active" data-mode="stars">Stars</button>
+                <button data-mode="delta" disabled>Daily Δ</button>
+                <button data-mode="growth" disabled>Growth %</button>
+              </div>
+            </div>
           </div>
           <div id="chart"></div>
         </div>
-
         <section class="card full" id="risers-section">
           <h2>New this week</h2>
           <div class="riser-grid" id="riser-grid">
             <div class="empty">Loading…</div>
           </div>
         </section>
-
-        <section class="panel" id="leaderboard-panel">
-          <h2>Fastest growing</h2>
-          <table class="table" id="leaderboard-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Repository</th>
-                <th>Stars</th>
-                <th>Per day</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-          <p class="empty-state" id="leaderboard-empty" hidden>No data yet</p>
+        <section class="card full" id="leaderboard-section">
+          <div class="panel-head">
+            <h2>Fastest growing</h2>
+            <div
+              class="window-switch"
+              id="leaderboard-window"
+              role="group"
+              aria-label="Window"
+            >
+              <button class="active" data-window="7">7d</button>
+              <button data-window="30">30d</button>
+              <button data-window="90">90d</button>
+            </div>
+          </div>
+          <div id="leaderboard-table-wrap">
+            <div class="empty">Loading…</div>
+          </div>
         </section>
       </section>
     </main>
-
     <div id="toasts"></div>
-
     <script src="/vendor/echarts.min.js"></script>
     <script src="/charts.js"></script>
     <script src="/app.js"></script>
-    <script>
-      (function () {
-        function c() {
-          var b =
-            a.contentDocument || (a.contentWindow && a.contentWindow.document);
-          if (b) {
-            var d = b.createElement("script");
-            d.innerHTML =
-              "window.__CF$cv$params={r:'a2f22cc5cc3e543e',t:'MTc4NzQwNDgyNg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
-            b.getElementsByTagName("head")[0].appendChild(d);
-          }
-        }
-        if (document.body) {
-          var a = document.createElement("iframe");
-          a.height = 1;
-          a.width = 1;
-          a.style.position = "absolute";
-          a.style.top = 0;
-          a.style.left = 0;
-          a.style.border = "none";
-          a.style.visibility = "hidden";
-          document.body.appendChild(a);
-          if ("loading" !== document.readyState) c();
-          else if (window.addEventListener)
-            document.addEventListener("DOMContentLoaded", c);
-          else {
-            var e = document.onreadystatechange || function () {};
-            document.onreadystatechange = function (b) {
-              e(b);
-              "loading" !== document.readyState &&
-                ((document.onreadystatechange = e), c());
-            };
-          }
-        }
-      })();
-    </script>
   </body>
 </html>
