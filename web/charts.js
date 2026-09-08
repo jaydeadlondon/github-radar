@@ -7,6 +7,9 @@ const AXIS_TEXT_COLOR = getComputedStyle(document.body)
   .trim();
 const CHART_COLORS = {
   line: getComputedStyle(document.body).getPropertyValue("--accent").trim(),
+  accentStrong: getComputedStyle(document.body)
+    .getPropertyValue("--accent-strong")
+    .trim(),
   split: getComputedStyle(document.body).getPropertyValue("--border").trim(),
   text: AXIS_TEXT_COLOR,
 };
@@ -16,6 +19,9 @@ function baseGrid() {
 function refreshChartColors() {
   CHART_COLORS.line = getComputedStyle(document.body)
     .getPropertyValue("--accent")
+    .trim();
+  CHART_COLORS.accentStrong = getComputedStyle(document.body)
+    .getPropertyValue("--accent-strong")
     .trim();
   CHART_COLORS.split = getComputedStyle(document.body)
     .getPropertyValue("--border")
@@ -73,7 +79,9 @@ function renderSeriesChart(repoName, points, options = {}) {
     emptyChart("No snapshots yet for this repository");
     return;
   }
+  const mode = options.mode || "stars";
   const days = points.map((point) => point.day);
+  const isDelta = mode === "delta";
   chart.clear();
   chart.setOption({
     tooltip: baseTooltip(),
@@ -81,24 +89,39 @@ function renderSeriesChart(repoName, points, options = {}) {
     xAxis: {
       type: "category",
       data: days,
-      boundaryGap: false,
+      boundaryGap: isDelta,
       axisLine: { lineStyle: { color: CHART_COLORS.split } },
       axisLabel: { color: CHART_COLORS.text },
     },
     yAxis: {
       type: "value",
-      min: (value) => Math.max(0, Math.floor(value.min * 0.95)),
+      min: isDelta ? 0 : (value) => Math.max(0, Math.floor(value.min * 0.95)),
       axisLine: { lineStyle: { color: CHART_COLORS.split } },
       axisLabel: { color: CHART_COLORS.text },
       splitLine: { lineStyle: { color: CHART_COLORS.split, opacity: 0.5 } },
     },
     series: [
-      starLineSeries(
-        repoName,
-        points.map((point) => point.stars),
-      ),
+      isDelta
+        ? deltaBarSeries(
+            `${repoName} — daily change`,
+            points.map((point) => point.delta),
+          )
+        : starLineSeries(
+            repoName,
+            points.map((point) => point.stars),
+          ),
     ],
   });
+}
+function deltaBarSeries(name, values) {
+  return {
+    name,
+    type: "bar",
+    data: values,
+    barMaxWidth: 18,
+    itemStyle: { color: CHART_COLORS.line, borderRadius: [2, 2, 0, 0] },
+    emphasis: { itemStyle: { color: CHART_COLORS.accentStrong } },
+  };
 }
 function starLineSeries(name, values) {
   return {
