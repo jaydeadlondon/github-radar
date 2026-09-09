@@ -5,6 +5,7 @@ const state = {
   sort: "stars",
   period: "30",
   chartMode: "stars",
+  smooth: localStorage.getItem("radar-smooth") === "1",
   selectedRepo: null,
   series: null,
   leaderboardWindow: "7",
@@ -14,6 +15,7 @@ const state = {
 };
 const el = (id) => document.getElementById(id);
 const periodDays = () => (state.period === "all" ? 365 : Number(state.period));
+const SMOOTH_WINDOW = 7;
 /* ---------- helpers ---------- */
 async function fetchJSON(path, signal) {
   const response = await fetch(path, { signal });
@@ -164,7 +166,9 @@ async function selectRepo(fullName) {
   try {
     const [detail, series, velocity, bursts] = await Promise.all([
       fetchJSON(`${API}/repos/${fullName}`),
-      fetchJSON(`${API}/analytics/series/${fullName}?days=${periodDays()}`),
+      fetchJSON(
+        `${API}/analytics/series/${fullName}?days=${periodDays()}&smooth=${SMOOTH_WINDOW}`,
+      ),
       loadVelocity(fullName),
       loadBursts(fullName),
     ]);
@@ -188,14 +192,25 @@ function renderChart() {
     return;
   }
   const points = state.series ? state.series.points : [];
-  renderSeriesChart(state.selectedRepo, points, { mode: state.chartMode });
+  renderSeriesChart(state.selectedRepo, points, {
+    mode: state.chartMode,
+    smooth: state.smooth,
+  });
 }
 function setChartMode(mode) {
   state.chartMode = mode;
   document.querySelectorAll("#chart-mode button").forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === mode);
   });
+  syncToolbar();
   renderChart();
+}
+function syncToolbar() {
+  const smoothToggle = el("smooth-toggle");
+  const smoothable = state.chartMode !== "growth";
+  smoothToggle.disabled = !smoothable;
+  smoothToggle.checked = state.smooth && smoothable;
+  smoothToggle.closest(".toggle").classList.toggle("disabled", !smoothable);
 }
 /* ---------- velocity + bursts (best-effort, never break the chart) ---------- */
 async function loadVelocity(fullName) {
@@ -414,6 +429,7 @@ function toggleTheme() {
 /* ---------- init ---------- */
 function init() {
   applyTheme();
+  syncToolbar();
   el("language-filter").addEventListener("change", (event) => {
     state.language = event.target.value;
     loadRepos();
@@ -421,6 +437,11 @@ function init() {
   el("period-select").addEventListener("change", (event) => {
     state.period = event.target.value;
     applyPeriod();
+  });
+  el("smooth-toggle").addEventListener("change", (event) => {
+    state.smooth = event.target.checked;
+    localStorage.setItem("radar-smooth", state.smooth ? "1" : "0");
+    renderChart();
   });
   el("chart-mode").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-mode]");

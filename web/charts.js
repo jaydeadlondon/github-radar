@@ -10,6 +10,7 @@ const CHART_COLORS = {
   accentStrong: getComputedStyle(document.body)
     .getPropertyValue("--accent-strong")
     .trim(),
+  average: getComputedStyle(document.body).getPropertyValue("--yellow").trim(),
   split: getComputedStyle(document.body).getPropertyValue("--border").trim(),
   text: AXIS_TEXT_COLOR,
 };
@@ -22,6 +23,9 @@ function refreshChartColors() {
     .trim();
   CHART_COLORS.accentStrong = getComputedStyle(document.body)
     .getPropertyValue("--accent-strong")
+    .trim();
+  CHART_COLORS.average = getComputedStyle(document.body)
+    .getPropertyValue("--yellow")
     .trim();
   CHART_COLORS.split = getComputedStyle(document.body)
     .getPropertyValue("--border")
@@ -108,7 +112,10 @@ function renderSeriesChart(repoName, points, options = {}) {
       },
       splitLine: { lineStyle: { color: CHART_COLORS.split, opacity: 0.5 } },
     },
-    series: [modeSeries(repoName, points, mode)],
+    series: [
+      modeSeries(repoName, points, mode),
+      ...(options.smooth ? averageSeries(points, mode) : []),
+    ],
   });
 }
 function modeSeries(repoName, points, mode) {
@@ -132,6 +139,26 @@ function growthValues(points) {
   return points.map(
     (point) => Math.round((point.stars / base - 1) * 10000) / 100,
   );
+}
+/** Moving-average overlay; the API fills stars_avg / delta_avg. */
+function averageSeries(points, mode) {
+  if (mode === "growth") return [];
+  const key = mode === "delta" ? "delta_avg" : "stars_avg";
+  const values = points.map((point) => point[key]);
+  if (values.every((value) => value === null || value === undefined)) return [];
+  return [
+    {
+      name: "Moving average",
+      type: "line",
+      data: values,
+      smooth: true,
+      symbol: "none",
+      connectNulls: false,
+      z: 3,
+      lineStyle: { color: CHART_COLORS.average, width: 2, type: "dashed" },
+      itemStyle: { color: CHART_COLORS.average },
+    },
+  ];
 }
 function percentTooltip() {
   return {
