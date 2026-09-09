@@ -82,9 +82,10 @@ function renderSeriesChart(repoName, points, options = {}) {
   const mode = options.mode || "stars";
   const days = points.map((point) => point.day);
   const isDelta = mode === "delta";
+  const isGrowth = mode === "growth";
   chart.clear();
   chart.setOption({
-    tooltip: baseTooltip(),
+    tooltip: isGrowth ? percentTooltip() : baseTooltip(),
     grid: baseGrid(),
     xAxis: {
       type: "category",
@@ -95,23 +96,49 @@ function renderSeriesChart(repoName, points, options = {}) {
     },
     yAxis: {
       type: "value",
-      min: isDelta ? 0 : (value) => Math.max(0, Math.floor(value.min * 0.95)),
+      min: isDelta
+        ? 0
+        : isGrowth
+          ? (value) => Math.floor(Math.min(0, value.min))
+          : (value) => Math.max(0, Math.floor(value.min * 0.95)),
       axisLine: { lineStyle: { color: CHART_COLORS.split } },
-      axisLabel: { color: CHART_COLORS.text },
+      axisLabel: {
+        color: CHART_COLORS.text,
+        formatter: isGrowth ? "{value}%" : undefined,
+      },
       splitLine: { lineStyle: { color: CHART_COLORS.split, opacity: 0.5 } },
     },
-    series: [
-      isDelta
-        ? deltaBarSeries(
-            `${repoName} — daily change`,
-            points.map((point) => point.delta),
-          )
-        : starLineSeries(
-            repoName,
-            points.map((point) => point.stars),
-          ),
-    ],
+    series: [modeSeries(repoName, points, mode)],
   });
+}
+function modeSeries(repoName, points, mode) {
+  if (mode === "delta") {
+    return deltaBarSeries(
+      `${repoName} — daily change`,
+      points.map((point) => point.delta),
+    );
+  }
+  if (mode === "growth") {
+    return starLineSeries(`${repoName} — growth`, growthValues(points));
+  }
+  return starLineSeries(
+    repoName,
+    points.map((point) => point.stars),
+  );
+}
+/** Percent growth of every point relative to the first day of the window. */
+function growthValues(points) {
+  const base = Math.max(points[0].stars, 1);
+  return points.map(
+    (point) => Math.round((point.stars / base - 1) * 10000) / 100,
+  );
+}
+function percentTooltip() {
+  return {
+    ...baseTooltip(),
+    valueFormatter: (value) =>
+      `${new Intl.NumberFormat("en-US").format(value)}%`,
+  };
 }
 function deltaBarSeries(name, values) {
   return {
