@@ -7,6 +7,8 @@ const state = {
   chartMode: "stars",
   smooth: localStorage.getItem("radar-smooth") === "1",
   logScale: false,
+  bursts: [],
+  activeBurst: false,
   selectedRepo: null,
   series: null,
   leaderboardWindow: "7",
@@ -171,20 +173,42 @@ async function selectRepo(fullName) {
         `${API}/analytics/series/${fullName}?days=${periodDays()}&smooth=${SMOOTH_WINDOW}`,
       ),
       loadVelocity(fullName),
-      loadBursts(fullName),
+      loadBursts(fullName, periodDays()),
     ]);
     state.series = series;
+    state.bursts = bursts ? bursts.items : [];
+    state.activeBurst = bursts ? bursts.active_burst : false;
     renderChart();
     renderVelocityBadges(velocity);
     renderBurstStrip(bursts);
-    const latest = detail.latest_snapshot;
-    el("chart-sub").textContent = latest
-      ? `${fullName} — ${formatNumber(latest.stargazers_count)} stars, ${formatNumber(latest.forks_count)} forks`
-      : `${fullName} — no data yet`;
+    renderChartSubtitle(fullName, detail.latest_snapshot);
   } catch (err) {
     state.series = null;
+    state.bursts = [];
+    state.activeBurst = false;
     el("chart-sub").textContent = `${fullName} — failed to load history`;
     toast(err.message, "error");
+  }
+}
+function renderChartSubtitle(fullName, latest) {
+  const parts = [fullName];
+  if (latest) {
+    parts.push(
+      `${formatNumber(latest.stargazers_count)} stars, ${formatNumber(latest.forks_count)} forks`,
+    );
+  } else {
+    parts.push("no data yet");
+  }
+  if (state.bursts.length) {
+    parts.push(`${state.bursts.length} burst(s) in this window`);
+  }
+  const subtitle = el("chart-sub");
+  subtitle.textContent = parts.join(" — ");
+  if (state.activeBurst) {
+    const badge = document.createElement("span");
+    badge.className = "burst-badge";
+    badge.textContent = "active burst";
+    subtitle.append(" ", badge);
   }
 }
 function renderChart() {
@@ -197,6 +221,7 @@ function renderChart() {
     mode: state.chartMode,
     smooth: state.smooth,
     logScale: state.logScale,
+    bursts: state.bursts,
   });
 }
 function setChartMode(mode) {
@@ -230,11 +255,11 @@ async function loadVelocity(fullName) {
     return null;
   }
 }
-async function loadBursts(fullName) {
+async function loadBursts(fullName, days = 90) {
   const [owner, name] = fullName.split("/");
   try {
     return await fetchJSON(
-      `${API}/analytics/bursts/${encodeURIComponent(owner)}/${encodeURIComponent(name)}?days=90`,
+      `${API}/analytics/bursts/${encodeURIComponent(owner)}/${encodeURIComponent(name)}?days=${days}`,
     );
   } catch (_) {
     return null;
@@ -270,7 +295,7 @@ function renderBurstStrip(bursts) {
   }
   if (bursts.items.length) {
     const end = Date.now();
-    const start = end - 90 * 24 * 60 * 60 * 1000;
+    const start = end - periodDays() * 24 * 60 * 60 * 1000;
     const span = end - start;
     const segments = bursts.items
       .map((b) => {
@@ -286,7 +311,7 @@ function renderBurstStrip(bursts) {
       })
       .join("");
     parts.push(
-      `<span class="strip-label">Bursts · 90d</span><span class="strip-track">${segments}</span>`,
+      `<span class="strip-label">Bursts · ${periodDays()}d</span><span class="strip-track">${segments}</span>`,
     );
   }
   strip.innerHTML = parts.join("");

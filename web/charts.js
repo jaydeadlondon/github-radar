@@ -141,10 +141,28 @@ function renderSeriesChart(repoName, points, options = {}) {
       splitLine: { lineStyle: { color: CHART_COLORS.split, opacity: 0.5 } },
     },
     series: [
-      modeSeries(repoName, points, mode),
+      {
+        ...modeSeries(repoName, points, mode),
+        markArea: burstMarkArea(options.bursts, mode),
+      },
       ...(options.smooth ? averageSeries(points, mode) : []),
     ],
   });
+}
+/** Shade the days that the burst detector flagged. */
+function burstMarkArea(bursts, mode) {
+  if (!bursts || !bursts.length) return undefined;
+  const color =
+    mode === "delta" ? "rgba(248,81,73,0.18)" : "rgba(210,153,34,0.16)";
+  return {
+    silent: true,
+    itemStyle: { color },
+    label: { show: false },
+    data: bursts.map((event) => [
+      { xAxis: event.start_day, name: "burst" },
+      { xAxis: event.end_day },
+    ]),
+  };
 }
 function modeSeries(repoName, points, mode) {
   if (mode === "delta") {
