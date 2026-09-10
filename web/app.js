@@ -6,6 +6,7 @@ const state = {
   period: "30",
   chartMode: "stars",
   smooth: localStorage.getItem("radar-smooth") === "1",
+  logScale: false,
   selectedRepo: null,
   series: null,
   leaderboardWindow: "7",
@@ -195,6 +196,7 @@ function renderChart() {
   renderSeriesChart(state.selectedRepo, points, {
     mode: state.chartMode,
     smooth: state.smooth,
+    logScale: state.logScale,
   });
 }
 function setChartMode(mode) {
@@ -211,6 +213,11 @@ function syncToolbar() {
   smoothToggle.disabled = !smoothable;
   smoothToggle.checked = state.smooth && smoothable;
   smoothToggle.closest(".toggle").classList.toggle("disabled", !smoothable);
+  const logToggle = el("log-toggle");
+  const loggable = state.chartMode === "stars";
+  logToggle.disabled = !loggable;
+  logToggle.checked = state.logScale && loggable;
+  logToggle.closest(".toggle").classList.toggle("disabled", !loggable);
 }
 /* ---------- velocity + bursts (best-effort, never break the chart) ---------- */
 async function loadVelocity(fullName) {
@@ -441,6 +448,10 @@ function init() {
   el("smooth-toggle").addEventListener("change", (event) => {
     state.smooth = event.target.checked;
     localStorage.setItem("radar-smooth", state.smooth ? "1" : "0");
+    renderChart();
+  });
+  el("log-toggle").addEventListener("change", (event) => {
+    state.logScale = event.target.checked;
     renderChart();
   });
   el("chart-mode").addEventListener("click", (event) => {

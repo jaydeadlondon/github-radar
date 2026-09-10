@@ -1,4 +1,4 @@
-/* GitHub Radar dashboard — ECharts helpers (v0.5). */
+/* GitHub Radar dashboard — ECharts helpers (v0.6). */
 /* Global state shared with app.js (defined in app.js). */
 /* eslint-disable no-undef */
 const chart = echarts.init(document.getElementById("chart"));
@@ -99,12 +99,16 @@ function renderSeriesChart(repoName, points, options = {}) {
       axisLabel: { color: CHART_COLORS.text },
     },
     yAxis: {
-      type: "value",
-      min: isDelta
-        ? 0
-        : isGrowth
-          ? (value) => Math.floor(Math.min(0, value.min))
-          : (value) => Math.max(0, Math.floor(value.min * 0.95)),
+      type: options.logScale && mode === "stars" ? "log" : "value",
+      logBase: 10,
+      min:
+        options.logScale && mode === "stars"
+          ? null
+          : isDelta
+            ? 0
+            : isGrowth
+              ? (value) => Math.floor(Math.min(0, value.min))
+              : (value) => Math.max(0, Math.floor(value.min * 0.95)),
       axisLine: { lineStyle: { color: CHART_COLORS.split } },
       axisLabel: {
         color: CHART_COLORS.text,
