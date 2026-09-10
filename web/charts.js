@@ -14,8 +14,31 @@ const CHART_COLORS = {
   split: getComputedStyle(document.body).getPropertyValue("--border").trim(),
   text: AXIS_TEXT_COLOR,
 };
-function baseGrid() {
-  return { left: 48, right: 16, top: 16, bottom: 36 };
+function baseGrid(withZoom = false) {
+  return { left: 48, right: 16, top: 16, bottom: withZoom ? 62 : 36 };
+}
+/** Wheel zoom on the plot plus a draggable range slider underneath. */
+function baseDataZoom() {
+  return [
+    {
+      type: "inside",
+      throttle: 50,
+      zoomOnMouseWheel: true,
+      moveOnMouseMove: true,
+    },
+    {
+      type: "slider",
+      height: 18,
+      bottom: 12,
+      borderColor: CHART_COLORS.split,
+      fillerColor: "rgba(88,166,255,0.15)",
+      handleStyle: { color: CHART_COLORS.line },
+      textStyle: { color: CHART_COLORS.text, fontSize: 10 },
+    },
+  ];
+}
+function resetZoom() {
+  chart.dispatchAction({ type: "dataZoom", start: 0, end: 100 });
 }
 function refreshChartColors() {
   CHART_COLORS.line = getComputedStyle(document.body)
@@ -90,7 +113,8 @@ function renderSeriesChart(repoName, points, options = {}) {
   chart.clear();
   chart.setOption({
     tooltip: isGrowth ? percentTooltip() : baseTooltip(),
-    grid: baseGrid(),
+    grid: baseGrid(true),
+    dataZoom: baseDataZoom(),
     xAxis: {
       type: "category",
       data: days,

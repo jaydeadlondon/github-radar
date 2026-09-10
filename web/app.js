@@ -454,6 +454,7 @@ function init() {
     state.logScale = event.target.checked;
     renderChart();
   });
+  el("reset-zoom").addEventListener("click", resetZoom);
   el("chart-mode").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-mode]");
     if (!button || button.disabled) return;
