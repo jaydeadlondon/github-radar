@@ -12,8 +12,7 @@ const state = {
   activeBurst: false,
   selectedRepo: null,
   series: null,
-  leaderboardWindow: "7",
-  leaderboardCache: null,
+  riserWindow: "7",
   velocityMap: new Map(),
   theme: localStorage.getItem("radar-theme") || "dark",
 };
@@ -114,7 +113,7 @@ function renderReposTable(payload) {
         .map((repo) => {
           const vel = state.velocityMap.get(repo.full_name);
           const velBadge = vel
-            ? `<span class="mini-velocity" title="${vel.stars_per_day} stars/day over ${state.leaderboardWindow}d">+${vel.stars_per_day}/d</span>`
+            ? `<span class="mini-velocity" title="${vel.stars_per_day} stars/day over ${state.riserWindow}d">+${vel.stars_per_day}/d</span>`
             : "";
           return `
         <tr class="repo-row" data-full-name="${escapeHtml(repo.full_name)}">
@@ -430,27 +429,37 @@ async function loadLanguages() {
     toast(`Languages: ${err.message}`, "warn");
   }
 }
-/* ---------- new this week (risers) ---------- */
+/* ---------- leaderboard ---------- */
 async function loadRisers() {
   const grid = el("riser-grid");
+  const params = new URLSearchParams({
+    window: state.riserWindow,
+    limit: "100",
+  });
+  if (state.language) params.set("language", state.language);
   try {
-    const risers = await fetchJSON(`${API}/trends?window=7&limit=8`);
+    const payload = await fetchJSON(`${API}/analytics/leaderboard?${params}`);
+    state.velocityMap = new Map(
+      payload.items.map((item) => [item.full_name, item]),
+    );
+    const risers = payload.items.slice(0, 8);
     if (!risers.length) {
       grid.innerHTML =
         '<div class="empty">Not enough data yet — run <code>radar snapshot</code> for a few days.</div>';
       return;
     }
-    const maxStars = Math.max(...risers.map((r) => r.stargazers_count));
+    const fastest = Math.max(...risers.map((repo) => repo.stars_per_day));
     grid.innerHTML = risers
-      .map((repo, index) => {
-        const share = maxStars
-          ? Math.round((repo.stargazers_count / maxStars) * 100)
+      .map((repo) => {
+        const share = fastest
+          ? Math.round((repo.stars_per_day / fastest) * 100)
           : 0;
         return `
         <div class="riser-card" data-full-name="${escapeHtml(repo.full_name)}">
-          <div class="rank">#${index + 1}</div>
+          <div class="rank">#${repo.rank}</div>
           <div class="name">${escapeHtml(repo.full_name)}</div>
-          <div class="delta">★ ${formatNumber(repo.stargazers_count)} stars</div>
+          <div class="delta">+${formatNumber(repo.stars_per_day)} stars/day</div>
+          <div class="sub">+${formatNumber(repo.stars_gained)} in ${state.riserWindow}d · ★ ${formatNumber(repo.stars)}</div>
           <div class="bar"><div class="bar-fill" style="width:${share}%"></div></div>
         </div>`;
       })
@@ -464,78 +473,13 @@ async function loadRisers() {
       });
     });
   } catch (err) {
+    state.velocityMap.clear();
     grid.innerHTML = `<div class="empty">Failed to load risers.<div class="hint">${escapeHtml(err.message)}</div></div>`;
     toast(err.message, "error");
   }
 }
-/* ---------- fastest growing (leaderboard) ---------- */
-function renderLeaderboard(payload) {
-  const wrap = el("leaderboard-table-wrap");
-  if (!payload.items.length) {
-    wrap.innerHTML =
-      '<div class="empty">Not enough history yet — run <code>radar snapshot</code> on several days.</div>';
-    return;
-  }
-  const table = document.createElement("table");
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th class="num">#</th>
-        <th>Repository</th>
-        <th>Language</th>
-        <th class="num">Stars</th>
-        <th class="num">Per day</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${payload.items
-        .map(
-          (item) => `
-        <tr class="lb-row" data-full-name="${escapeHtml(item.full_name)}">
-          <td class="num">${item.rank}</td>
-          <td>${escapeHtml(item.full_name)}</td>
-          <td>${item.language ? `<span class="lang-badge">${escapeHtml(item.language)}</span>` : "—"}</td>
-          <td class="num">${formatNumber(item.stars)}</td>
-          <td class="num"><span class="badge badge-velocity">+${item.stars_per_day}/d</span></td>
-        </tr>`,
-        )
-        .join("")}
-    </tbody>
-  `;
-  wrap.innerHTML = "";
-  wrap.appendChild(table);
-  table.querySelectorAll("tr.lb-row").forEach((row) => {
-    row.addEventListener("click", () => {
-      state.search = "";
-      el("search").value = "";
-      selectRepo(row.dataset.fullName);
-      loadRepos();
-    });
-  });
-}
-async function loadLeaderboard() {
-  const wrap = el("leaderboard-table-wrap");
-  wrap.innerHTML =
-    '<div class="empty"><span class="spinner"></span> Loading leaderboard…</div>';
-  try {
-    const payload = await fetchJSON(
-      `${API}/analytics/leaderboard?window=${state.leaderboardWindow}&limit=100`,
-    );
-    state.leaderboardCache = payload;
-    state.velocityMap = new Map(
-      payload.items.map((item) => [item.full_name, item]),
-    );
-    renderLeaderboard(payload);
-    if (
-      state.velocityMap.size &&
-      el("repos-table-wrap").querySelector("table")
-    ) {
-      loadRepos();
-    }
-  } catch (err) {
-    wrap.innerHTML = `<div class="empty">Failed to load leaderboard.<div class="hint">${escapeHtml(err.message)}</div></div>`;
-    toast(err.message, "error");
-  }
+function loadLeaderboardAndRepos() {
+  return loadRisers().finally(loadRepos);
 }
 /* ---------- theme ---------- */
 function applyTheme() {
@@ -556,7 +500,7 @@ function init() {
   syncToolbar();
   el("language-filter").addEventListener("change", (event) => {
     state.language = event.target.value;
-    loadRepos();
+    loadLeaderboardAndRepos();
   });
   el("period-select").addEventListener("change", (event) => {
     state.period = event.target.value;
@@ -577,14 +521,14 @@ function init() {
     if (!button || button.disabled) return;
     setChartMode(button.dataset.mode);
   });
-  el("leaderboard-window").addEventListener("click", (event) => {
+  el("riser-window").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-window]");
     if (!button) return;
-    state.leaderboardWindow = button.dataset.window;
-    el("leaderboard-window")
-      .querySelectorAll("button")
-      .forEach((b) => b.classList.toggle("active", b === button));
-    loadLeaderboard();
+    state.riserWindow = button.dataset.window;
+    document.querySelectorAll("#riser-window button").forEach((item) => {
+      item.classList.toggle("active", item === button);
+    });
+    loadLeaderboardAndRepos();
   });
   let debounceTimer = null;
   el("theme-toggle").addEventListener("click", toggleTheme);
@@ -593,16 +537,10 @@ function init() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(loadRepos, 300);
   });
-  el("refresh-btn").addEventListener("click", () => {
-    loadRepos();
-    loadRisers();
-    loadLeaderboard();
-  });
+  el("refresh-btn").addEventListener("click", loadLeaderboardAndRepos);
   refreshChartColors();
   refreshStatusBadge();
   loadLanguages();
-  loadLeaderboard();
-  loadRepos();
-  loadRisers();
+  loadLeaderboardAndRepos();
 }
 document.addEventListener("DOMContentLoaded", init);
