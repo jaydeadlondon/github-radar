@@ -7,6 +7,7 @@ const state = {
   chartMode: "stars",
   smooth: localStorage.getItem("radar-smooth") === "1",
   logScale: false,
+  compare: new Set(),
   bursts: [],
   activeBurst: false,
   selectedRepo: null,
@@ -19,6 +20,17 @@ const state = {
 const el = (id) => document.getElementById(id);
 const periodDays = () => (state.period === "all" ? 365 : Number(state.period));
 const SMOOTH_WINDOW = 7;
+const MAX_COMPARE = 5;
+const COMPARE_MODES = {
+  stars: "absolute",
+  delta: "indexed",
+  growth: "percent",
+};
+const COMPARE_LABELS = {
+  absolute: "stars",
+  indexed: "indexed to 100",
+  percent: "growth since the start of the window",
+};
 /* ---------- helpers ---------- */
 async function fetchJSON(path, signal) {
   const response = await fetch(path, { signal });
@@ -90,6 +102,7 @@ function renderReposTable(payload) {
   table.innerHTML = `
     <thead>
       <tr>
+        <th class="cmp-col" title="Pick two or more to compare">⇄</th>
         <th class="sortable" data-sort="name">Repository ${arrow("name")}</th>
         <th>Language</th>
         <th class="sortable num" data-sort="stars">Stars ${arrow("stars")}</th>
@@ -105,6 +118,11 @@ function renderReposTable(payload) {
             : "";
           return `
         <tr class="repo-row" data-full-name="${escapeHtml(repo.full_name)}">
+          <td class="cmp-col">
+            <input type="checkbox" class="cmp-box"
+              data-full-name="${escapeHtml(repo.full_name)}"
+              ${state.compare.has(repo.full_name) ? "checked" : ""} />
+          </td>
           <td>${escapeHtml(repo.full_name)} ${velBadge}</td>
           <td>${repo.language ? `<span class="lang-badge">${escapeHtml(repo.language)}</span>` : "—"}</td>
           <td class="num">${formatNumber(repo.stargazers_count)}</td>
@@ -126,6 +144,10 @@ function renderReposTable(payload) {
     row.addEventListener("click", () => {
       selectRepo(row.dataset.fullName);
     });
+  });
+  table.querySelectorAll("input.cmp-box").forEach((box) => {
+    box.addEventListener("click", (event) => event.stopPropagation());
+    box.addEventListener("change", () => toggleCompare(box));
   });
 }
 function showTableSpinner() {
@@ -211,7 +233,71 @@ function renderChartSubtitle(fullName, latest) {
     subtitle.append(" ", badge);
   }
 }
+/* ---------- comparison ---------- */
+function toggleCompare(box) {
+  const fullName = box.dataset.fullName;
+  if (box.checked) {
+    if (state.compare.size >= MAX_COMPARE) {
+      box.checked = false;
+      toast(`Compare up to ${MAX_COMPARE} repositories at once`, "warn");
+      return;
+    }
+    state.compare.add(fullName);
+  } else {
+    state.compare.delete(fullName);
+  }
+  renderCompareBar();
+  syncToolbar();
+  renderChart();
+}
+function clearCompare() {
+  state.compare.clear();
+  document.querySelectorAll("input.cmp-box").forEach((box) => {
+    box.checked = false;
+  });
+  renderCompareBar();
+  syncToolbar();
+  renderChart();
+}
+function renderCompareBar() {
+  const bar = el("compare-bar");
+  if (!state.compare.size) {
+    bar.innerHTML = "";
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "";
+  bar.innerHTML =
+    [...state.compare]
+      .map((name) => `<span class="chip">${escapeHtml(name)}</span>`)
+      .join("") + '<button class="btn small" id="clear-compare">Clear</button>';
+  el("clear-compare").addEventListener("click", clearCompare);
+}
+async function renderComparison() {
+  const names = [...state.compare];
+  const mode = COMPARE_MODES[state.chartMode];
+  const params = new URLSearchParams({
+    repos: names.join(","),
+    window: String(periodDays()),
+    mode,
+  });
+  el("chart-sub").textContent = `Comparing ${names.length} repositories…`;
+  try {
+    const payload = await fetchJSON(`${API}/analytics/compare?${params}`);
+    renderCompareChart(payload.days, payload.series, payload.mode);
+    el("chart-sub").textContent =
+      `Comparing ${names.length} repositories — ${COMPARE_LABELS[mode]}, last ${payload.window_days} days`;
+  } catch (err) {
+    emptyChart("Failed to compare repositories");
+    el("chart-sub").textContent = `Comparison failed — ${err.message}`;
+    toast(err.message, "error");
+  }
+}
 function renderChart() {
+  if (state.compare.size >= 2) {
+    renderComparison();
+    return;
+  }
   if (!state.selectedRepo) {
     emptyChart("Select a repository to see its star history");
     return;
@@ -233,13 +319,18 @@ function setChartMode(mode) {
   renderChart();
 }
 function syncToolbar() {
+  const comparing = state.compare.size >= 2;
+  const deltaButton = document.querySelector(
+    '#chart-mode button[data-mode="delta"]',
+  );
+  deltaButton.textContent = comparing ? "Indexed" : "Daily Δ";
   const smoothToggle = el("smooth-toggle");
-  const smoothable = state.chartMode !== "growth";
+  const smoothable = !comparing && state.chartMode !== "growth";
   smoothToggle.disabled = !smoothable;
   smoothToggle.checked = state.smooth && smoothable;
   smoothToggle.closest(".toggle").classList.toggle("disabled", !smoothable);
   const logToggle = el("log-toggle");
-  const loggable = state.chartMode === "stars";
+  const loggable = !comparing && state.chartMode === "stars";
   logToggle.disabled = !loggable;
   logToggle.checked = state.logScale && loggable;
   logToggle.closest(".toggle").classList.toggle("disabled", !loggable);
@@ -461,6 +552,7 @@ function toggleTheme() {
 /* ---------- init ---------- */
 function init() {
   applyTheme();
+  renderCompareBar();
   syncToolbar();
   el("language-filter").addEventListener("change", (event) => {
     state.language = event.target.value;

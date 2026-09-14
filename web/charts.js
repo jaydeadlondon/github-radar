@@ -248,6 +248,60 @@ function starLineSeries(name, values) {
     },
   };
 }
+const COMPARE_PALETTE = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#bc8cff"];
+const COMPARE_SUFFIX = { absolute: "", indexed: "", percent: "%" };
+/** Render several repositories on one shared day grid. */
+function renderCompareChart(days, seriesList, mode) {
+  if (!days.length || !seriesList.length) {
+    emptyChart("Not enough history to compare these repositories");
+    return;
+  }
+  const suffix = COMPARE_SUFFIX[mode] || "";
+  chart.clear();
+  chart.setOption({
+    tooltip: {
+      ...baseTooltip(),
+      valueFormatter: (value) =>
+        value === null || value === undefined
+          ? "—"
+          : `${new Intl.NumberFormat("en-US").format(value)}${suffix}`,
+    },
+    legend: {
+      top: 0,
+      textStyle: { color: CHART_COLORS.text, fontSize: 11 },
+      inactiveColor: CHART_COLORS.split,
+    },
+    grid: { left: 56, right: 16, top: 34, bottom: 62 },
+    dataZoom: baseDataZoom(),
+    xAxis: {
+      type: "category",
+      data: days,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: CHART_COLORS.split } },
+      axisLabel: { color: CHART_COLORS.text },
+    },
+    yAxis: {
+      type: "value",
+      scale: mode !== "absolute",
+      axisLine: { lineStyle: { color: CHART_COLORS.split } },
+      axisLabel: { color: CHART_COLORS.text, formatter: `{value}${suffix}` },
+      splitLine: { lineStyle: { color: CHART_COLORS.split, opacity: 0.5 } },
+    },
+    series: seriesList.map((item, index) => {
+      const color = COMPARE_PALETTE[index % COMPARE_PALETTE.length];
+      return {
+        name: item.full_name,
+        type: "line",
+        data: item.values,
+        smooth: true,
+        symbol: "none",
+        connectNulls: false,
+        lineStyle: { color, width: 2 },
+        itemStyle: { color },
+      };
+    }),
+  });
+}
 function resizeChart() {
   chart.resize();
 }
