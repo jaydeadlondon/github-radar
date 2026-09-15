@@ -7,9 +7,9 @@ from analytics import service
 from api.deps import get_session
 from api.schemas import (
     BurstOut,
+    BurstsOut,
     CompareOut,
     CompareSeriesOut,
-    BurstsOut,
     LeaderboardItemOut,
     Paginated,
     RepoBriefOut,
