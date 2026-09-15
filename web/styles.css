@@ -100,6 +100,11 @@ body {
   color: var(--accent);
 }
 
+.btn.small {
+  padding: 5px 9px;
+  font-size: 0.78rem;
+}
+
 /* Content */
 .content {
   max-width: 1200px;
@@ -246,9 +251,132 @@ th.num {
   margin-bottom: 12px;
 }
 
+.cmp-col {
+  width: 34px;
+  text-align: center;
+}
+
+.cmp-col input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.compare-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.burst-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--red);
+  border-radius: 999px;
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--red);
+  font-size: 0.72rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.seg button {
+  padding: 5px 10px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.seg button:last-child {
+  border-right: none;
+}
+
+.seg button.active {
+  background: var(--accent-strong);
+  color: #fff;
+}
+
+.seg button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toggle input {
+  accent-color: var(--accent);
+}
+
+.toggle.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 #chart {
   flex: 1;
   min-height: 300px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.section-head h2 {
+  margin: 0;
+}
+
+.riser-card .sub {
+  color: var(--text-muted);
+  font-size: 0.75rem;
 }
 
 /* New-this-week cards */
