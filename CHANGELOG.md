@@ -2,6 +2,39 @@
 
 All notable changes to this project.
 
+## [0.6.0] — 2026-09-15
+
+### Added
+
+- Comparison engine: several repositories aligned on one day grid, rebased to
+  index 100 or to percent growth (`analytics/compare.py`)
+- Moving-average smoothing for star series and daily deltas
+- REST API:
+  - `GET /analytics/series/{owner}/{name}` — daily series with `delta`,
+    optional `stars_avg` / `delta_avg` (`smooth` window)
+  - `GET /analytics/compare` — up to 5 repositories, `mode=absolute|indexed|percent`
+  - `language` filter on `/analytics/leaderboard`
+- Dashboard: chart mode switcher (stars / daily change / growth %),
+  moving-average overlay, log scale, wheel zoom with a range slider,
+  burst periods shaded on the chart with an "active burst" badge
+- Dashboard: comparison mode — pick up to 5 repositories in the table and
+  overlay their curves; PNG export of the current chart
+- Dashboard: "Fastest growing" panel driven by the leaderboard endpoint —
+  real stars/day and the gain over 7 / 30 / 90 days
+- Tests: the original split series, velocity, bursts and analytics API suites,
+  plus comparison, regression and dashboard contract coverage (140 tests total)
+
+### Fixed
+
+- Snapshot timestamps without a timezone were read as local time, which merged
+  or shifted whole days of history outside UTC
+- The repositories table showed fork counts under an "Updated" header
+- Analytics dashboard code referenced four HTML elements that did not exist;
+  its duplicate growth panels are now consolidated without losing velocity badges
+- The injected Cloudflare challenge script was removed from the offline dashboard
+- Analytics tests and API imports now pass the configured ruff checks
+- `radar.db` is ignored and no longer tracked by git
+
 ## [0.5.0] — 2026-08-31
 
 ### Added

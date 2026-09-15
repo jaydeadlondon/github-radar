@@ -4,7 +4,8 @@ Analytics service that tracks rising stars on GitHub: it collects data about
 repositories, builds star-growth history, and detects projects that are
 "taking off" before everyone else.
 
-> **Status:** version 0.5 — CLI collector, storage, REST API, analytics engine, background scheduler and a web dashboard.
+> **Status:** version 0.6 — CLI collector, storage, REST API, analytics engine,
+> background scheduler and a web dashboard with comparison charts.
 
 ## Features
 
@@ -85,6 +86,8 @@ Interactive docs: <http://127.0.0.1:8000/docs> (OpenAPI).
 | GET | `/api/v1/analytics/velocity/{owner}/{name}` | Stars/day per window + OLS trend (`windows`, `days`) |
 | GET | `/api/v1/analytics/bursts/{owner}/{name}` | Detected bursts and the active-burst flag (`days`) |
 | GET | `/api/v1/analytics/leaderboard` | Fastest growing repos (`window` 7/30/90, `limit`, `offset`) |
+| GET | `/api/v1/analytics/series/{owner}/{name}` | Daily star series with deltas (`days`, `smooth`) |
+| GET | `/api/v1/analytics/compare` | Up to 5 repositories on one grid (`repos`, `window`, `mode`) |
 
 Examples:
 
@@ -94,6 +97,8 @@ curl http://127.0.0.1:8000/api/v1/trends?window=7
 curl http://127.0.0.1:8000/api/v1/repos/psf/requests/history?days=30
 curl http://127.0.0.1:8000/api/v1/analytics/velocity/psf/requests?windows=7,30
 curl http://127.0.0.1:8000/api/v1/analytics/leaderboard?window=30&limit=10
+curl "http://127.0.0.1:8000/api/v1/analytics/series/psf/requests?days=90&smooth=7"
+curl "http://127.0.0.1:8000/api/v1/analytics/compare?repos=psf/requests,pallets/flask&mode=percent"
 ```
 
 Error responses use a consistent shape: `{"detail": "...", "code": 404}`.
@@ -111,6 +116,12 @@ gaps), and everything else is derived from it:
   measure of how well the line fits
 - **Bursts** — days whose delta exceeds `mean + z * std` of a rolling window are
   flagged, glued into events and scored by severity (peak over baseline)
+- **Comparison** — several repositories put on one day grid and rebased:
+  raw stars, index 100 at the start of the window, or percent growth
+- **Smoothing** — a moving average over stars or daily deltas (`smooth=7`)
+
+Snapshot timestamps are always read as UTC, so day buckets do not shift with the
+machine's timezone.
 
 Thresholds are configurable through `.env`:
 
@@ -142,10 +153,15 @@ the server down.
 The dashboard is served by the API at <http://127.0.0.1:8000/> — start it with
 `radar serve` and open the address.
 
-- Table of tracked repositories with sorting (name / stars / updated)
-- Language filter and live search (debounced)
-- Star-growth line chart for any repository (7 / 30 / 90 days / all time)
-- "New this week" cards — top repos by star growth
+- Table of tracked repositories with sorting, language filter and live search
+- Three chart modes: stars, daily change (bars) and growth % from the window start
+- Moving-average overlay (SMA 7), log scale, wheel zoom with a range slider
+- Burst periods shaded right on the chart, with a timeline and active-burst badge
+- Velocity and OLS-trend badges alongside repository details and table rows
+- Comparison mode: tick up to 5 repositories and overlay their curves —
+  absolute, indexed to 100, or percent growth
+- "Fastest growing" panel — real stars/day over 7 / 30 / 90 days
+- PNG export of the current chart
 - Dark / light theme (remembered in localStorage), mobile-friendly layout
 
 The frontend is plain HTML/CSS/JS with ECharts bundled locally in
