@@ -170,3 +170,90 @@ async def test_search_query_parameter(api_client, db_session):
     response = await api_client.get("/api/v1/repos", params={"q": "zzz-no-match"})
     assert response.status_code == 200
     assert response.json()["items"] == []
+
+
+async def test_series_payload_contract(api_client, db_session):
+    await _seed_full_db(db_session)
+    response = await api_client.get(
+        "/api/v1/analytics/series/golang/go", params={"smooth": 2}
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert set(payload) == {"repo", "smooth_window", "points"}
+    assert set(payload["repo"]) == {"owner", "name", "full_name", "stars"}
+    assert payload["smooth_window"] == 2
+    assert payload["points"]
+    for point in payload["points"]:
+        assert set(point) == {"day", "stars", "delta", "stars_avg", "delta_avg"}
+        assert len(point["day"]) == 10  # the chart uses the day as a category
+        assert isinstance(point["stars"], int)
+        assert isinstance(point["delta"], int)
+    days = [point["day"] for point in payload["points"]]
+    assert days == sorted(days)
+
+
+async def test_compare_payload_contract(api_client, db_session):
+    await _seed_full_db(db_session)
+    response = await api_client.get(
+        "/api/v1/analytics/compare",
+        params={"repos": "golang/go,rust-lang/rust", "mode": "indexed"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert set(payload) == {"mode", "window_days", "days", "series"}
+    assert payload["mode"] == "indexed"
+    assert isinstance(payload["window_days"], int)
+    assert len(payload["series"]) == 2
+    for item in payload["series"]:
+        assert set(item) == {"full_name", "values"}
+        assert len(item["values"]) == len(payload["days"])
+        assert item["values"][0] == 100.0  # every line starts at the same level
+
+
+async def test_leaderboard_payload_contract(api_client, db_session):
+    await _seed_full_db(db_session)
+    response = await api_client.get(
+        "/api/v1/analytics/leaderboard", params={"window": 7, "limit": 8}
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert set(payload) == {"total", "offset", "limit", "next_offset", "items"}
+    assert payload["items"]
+    for index, item in enumerate(payload["items"], start=1):
+        assert set(item) == {
+            "rank",
+            "owner",
+            "name",
+            "full_name",
+            "language",
+            "stars",
+            "stars_per_day",
+            "stars_gained",
+        }
+        assert item["rank"] == index
+        assert isinstance(item["stars_per_day"], (int, float))
+    speeds = [item["stars_per_day"] for item in payload["items"]]
+    assert speeds == sorted(speeds, reverse=True)
+
+
+async def test_bursts_payload_contract(api_client, db_session):
+    await _seed_full_db(db_session)
+    response = await api_client.get("/api/v1/analytics/bursts/golang/go")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert set(payload) == {"items", "active_burst"}
+    assert isinstance(payload["active_burst"], bool)
+    for event in payload["items"]:
+        assert set(event) == {
+            "start_day",
+            "end_day",
+            "duration_days",
+            "peak_day",
+            "peak_delta",
+            "total_gained",
+            "severity",
+        }
