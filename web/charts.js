@@ -302,6 +302,23 @@ function renderCompareChart(days, seriesList, mode) {
     }),
   });
 }
+/** Save whatever is on the chart right now as a PNG file. */
+function exportChartPng(fileName) {
+  const background = getComputedStyle(document.body)
+    .getPropertyValue("--bg-elevated")
+    .trim();
+  const url = chart.getDataURL({
+    type: "png",
+    pixelRatio: 2,
+    backgroundColor: background || "#161b22",
+  });
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
 function resizeChart() {
   chart.resize();
 }

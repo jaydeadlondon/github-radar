@@ -516,6 +516,20 @@ function init() {
     renderChart();
   });
   el("reset-zoom").addEventListener("click", resetZoom);
+  el("export-png").addEventListener("click", () => {
+    const subject =
+      state.compare.size >= 2
+        ? `compare-${state.compare.size}`
+        : state.selectedRepo;
+    if (!subject) {
+      toast("Select a repository first", "warn");
+      return;
+    }
+    const stamp = new Date().toISOString().slice(0, 10);
+    exportChartPng(
+      `radar-${subject.replace("/", "-")}-${state.chartMode}-${stamp}.png`,
+    );
+  });
   el("chart-mode").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-mode]");
     if (!button || button.disabled) return;
