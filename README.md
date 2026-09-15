@@ -19,8 +19,8 @@ repositories, builds star-growth history, and detects projects that are
 - `radar leaderboard` — the fastest growing tracked repositories
 - `radar serve` — REST API server
 - REST API: repositories, history, trends, languages, analytics, health
-- Analytics engine: daily star series, sliding-window velocity, trend slope and
-  z-score burst detection
+- Analytics engine: daily star series, sliding-window velocity, trend slope,
+  z-score burst detection and multi-repository comparison
 - Background snapshots on a schedule (APScheduler, opt-in)
 - Smart GitHub API client: rate-limit retries, pagination, ETag request caching
 
@@ -85,7 +85,7 @@ Interactive docs: <http://127.0.0.1:8000/docs> (OpenAPI).
 | GET | `/api/v1/languages` | Per-language aggregates |
 | GET | `/api/v1/analytics/velocity/{owner}/{name}` | Stars/day per window + OLS trend (`windows`, `days`) |
 | GET | `/api/v1/analytics/bursts/{owner}/{name}` | Detected bursts and the active-burst flag (`days`) |
-| GET | `/api/v1/analytics/leaderboard` | Fastest growing repos (`window` 7/30/90, `limit`, `offset`) |
+| GET | `/api/v1/analytics/leaderboard` | Fastest growing repos (`window` 7/30/90, `language`, `limit`, `offset`) |
 | GET | `/api/v1/analytics/series/{owner}/{name}` | Daily star series with deltas (`days`, `smooth`) |
 | GET | `/api/v1/analytics/compare` | Up to 5 repositories on one grid (`repos`, `window`, `mode`) |
 
@@ -147,7 +147,6 @@ The job runs once at startup and then every `RADAR_SCHEDULER_INTERVAL_HOURS`
 hours; overlapping runs are coalesced, and failures are logged without taking
 the server down.
 
-
 ## Dashboard
 
 The dashboard is served by the API at <http://127.0.0.1:8000/> — start it with
@@ -169,6 +168,9 @@ The frontend is plain HTML/CSS/JS with ECharts bundled locally in
 
 ## Tests and linter
 
+The 140-test suite includes the original split analytics tests for series,
+velocity, bursts and API behavior, plus the 0.6 comparison and regression cases.
+
 ```bash
 pip install -e ".[dev]"
 pytest
@@ -183,7 +185,7 @@ src/
 ├── version.py       # package version constant
 ├── github/          # GitHub API client: models, errors, client
 ├── collector/       # CLI (typer), store, snapshot pipeline and scheduler
-├── analytics/       # star series, velocity, trend slope, burst detection
+├── analytics/       # star series, velocity, trend slope, bursts, comparison
 ├── db/              # SQLAlchemy async: engine, models, db helpers
 └── api/             # FastAPI: app, deps, schemas, routes/
 web/                 # dashboard: index.html, app.js, charts.js, styles.css
