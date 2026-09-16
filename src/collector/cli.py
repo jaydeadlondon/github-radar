@@ -20,6 +20,8 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+alerts_app = typer.Typer(help="Manage alert rules and the alert inbox.", no_args_is_help=True)
+app.add_typer(alerts_app, name="alerts")
 
 
 def _run_async(fn: Callable[[], Awaitable[None]]) -> None:
@@ -429,5 +431,143 @@ def leaderboard(
                 f"+{v.stars_per_day:.1f}",
             )
         console.print(table)
+
+    _run_async(_impl)
+
+
+_ALERT_TYPE_ALIASES = {
+    "burst": "burst_started",
+    "velocity": "velocity_above",
+    "milestone": "stars_reached",
+}
+
+
+@alerts_app.command("add")
+def alerts_add(
+    full_name: str = typer.Argument(..., metavar="owner/name"),
+    alert_type: str = typer.Option(..., "--type", help="burst, velocity or milestone"),
+    threshold: float | None = typer.Option(None, "--threshold"),
+    window: int | None = typer.Option(None, "--window"),
+    disabled: bool = typer.Option(False, "--disabled", help="Create the rule disabled."),
+) -> None:
+    """Create an alert rule for a tracked repository."""
+    kind = _ALERT_TYPE_ALIASES.get(alert_type)
+    if kind is None:
+        console.print("[red]Error:[/red] --type must be burst, velocity or milestone")
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        from alerts import RuleSpec, validate_rule
+        from db.alerts import create_rule
+        from db.base import SessionFactory
+        from db.repositories import get_repository_by_name
+
+        try:
+            spec = validate_rule(
+                RuleSpec(kind=kind, threshold=threshold, window_days=window)
+            )
+        except ValueError as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(2) from exc
+
+        async with SessionFactory() as session:
+            repo = await get_repository_by_name(session, full_name)
+            if repo is None:
+                console.print(f"[red]Repository not tracked:[/red] {full_name}")
+                raise typer.Exit(1)
+            rule = await create_rule(session, repo, spec, enabled=not disabled)
+            await session.commit()
+        console.print(f"[green]Created alert rule #{rule.id}[/green] for {full_name}.")
+
+    _run_async(_impl)
+
+
+@alerts_app.command("list")
+def alerts_list() -> None:
+    """List alert rules."""
+
+    async def _impl() -> None:
+        from db.alerts import list_rules
+        from db.base import SessionFactory
+
+        async with SessionFactory() as session:
+            rules, _total = await list_rules(session)
+        if not rules:
+            console.print("[yellow]No alert rules configured.[/yellow]")
+            return
+
+        table = Table(title="Alert rules")
+        table.add_column("ID", justify="right")
+        table.add_column("Repository")
+        table.add_column("Type")
+        table.add_column("Condition")
+        table.add_column("Enabled")
+        for rule in rules:
+            if rule.kind == "velocity_above":
+                condition = f">= {rule.threshold:g}/day ({rule.window_days}d)"
+            elif rule.kind == "stars_reached":
+                condition = f">= {rule.threshold:g} stars"
+            else:
+                condition = "new burst"
+            table.add_row(
+                str(rule.id),
+                rule.repository.full_name,
+                rule.kind,
+                condition,
+                "yes" if rule.enabled else "no",
+            )
+        console.print(table)
+
+    _run_async(_impl)
+
+
+async def _set_alert_rule_enabled(rule_id: int, enabled: bool) -> None:
+    from db.alerts import get_rule
+    from db.base import SessionFactory
+
+    async with SessionFactory() as session:
+        rule = await get_rule(session, rule_id)
+        if rule is None:
+            console.print(f"[red]Alert rule not found:[/red] {rule_id}")
+            raise typer.Exit(1)
+        rule.enabled = enabled
+        await session.commit()
+    state = "enabled" if enabled else "disabled"
+    console.print(f"[green]Alert rule #{rule_id} {state}.[/green]")
+
+
+@alerts_app.command("enable")
+def alerts_enable(rule_id: int = typer.Argument(..., min=1)) -> None:
+    """Enable an alert rule."""
+    _run_async(lambda: _set_alert_rule_enabled(rule_id, True))
+
+
+@alerts_app.command("disable")
+def alerts_disable(rule_id: int = typer.Argument(..., min=1)) -> None:
+    """Disable an alert rule."""
+    _run_async(lambda: _set_alert_rule_enabled(rule_id, False))
+
+
+@alerts_app.command("delete")
+def alerts_delete(
+    rule_id: int = typer.Argument(..., min=1),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+) -> None:
+    """Delete an alert rule while retaining its event history."""
+    if not yes and not typer.confirm(f"Delete alert rule #{rule_id}?"):
+        raise typer.Abort()
+
+    async def _impl() -> None:
+        from db.alerts import delete_rule, get_rule
+        from db.base import SessionFactory
+
+        async with SessionFactory() as session:
+            rule = await get_rule(session, rule_id)
+            if rule is None:
+                console.print(f"[red]Alert rule not found:[/red] {rule_id}")
+                raise typer.Exit(1)
+            await delete_rule(session, rule)
+            await session.commit()
+        console.print(f"[green]Deleted alert rule #{rule_id}.[/green]")
 
     _run_async(_impl)
