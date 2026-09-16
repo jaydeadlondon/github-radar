@@ -1,7 +1,7 @@
 from datetime import date, datetime
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
@@ -136,3 +136,34 @@ class LeaderboardItemOut(BaseModel):
     stars: int
     stars_per_day: float
     stars_gained: int
+
+
+AlertKind = Literal["burst_started", "velocity_above", "stars_reached"]
+
+
+class AlertRuleCreate(BaseModel):
+    repository: str = Field(min_length=3, max_length=255, pattern=r"^[^/]+/[^/]+$")
+    kind: AlertKind
+    threshold: float | None = None
+    window_days: int | None = None
+    enabled: bool = True
+
+
+class AlertRuleUpdate(BaseModel):
+    kind: AlertKind | None = None
+    threshold: float | None = None
+    window_days: int | None = None
+    enabled: bool | None = None
+
+
+class AlertRuleOut(BaseModel):
+    id: int
+    repository: str
+    kind: AlertKind
+    threshold: float | None
+    window_days: int | None
+    enabled: bool
+    last_value: float | None
+    last_evaluated_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
