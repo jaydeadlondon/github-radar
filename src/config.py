@@ -28,5 +28,9 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = False
     scheduler_interval_hours: int = 24
 
+    alerts_enabled: bool = True
+    alert_webhook_url: str = ""
+    alert_webhook_timeout_seconds: float = 10.0
+
 
 settings = Settings()
