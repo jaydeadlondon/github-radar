@@ -42,9 +42,11 @@ async def _clean_tables():
     from sqlalchemy import delete
 
     from db.base import SessionFactory
-    from db.models import Repository, RepoSnapshot
+    from db.models import AlertEvent, AlertRule, Repository, RepoSnapshot
 
     async with SessionFactory() as session:
+        await session.execute(delete(AlertEvent))
+        await session.execute(delete(AlertRule))
         await session.execute(delete(RepoSnapshot))
         await session.execute(delete(Repository))
         await session.commit()
