@@ -1,7 +1,9 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -45,6 +47,10 @@ class Repository(TimestampMixin, Base):
         back_populates="repository",
         cascade="all, delete-orphan",
     )
+    alert_rules: Mapped[list["AlertRule"]] = relationship(
+        back_populates="repository",
+        cascade="all, delete-orphan",
+    )
 
 
 class RepoSnapshot(TimestampMixin, Base):
@@ -66,3 +72,58 @@ class RepoSnapshot(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_repo_snapshots_repo_id_observed_at", "repo_id", "observed_at"),
     )
+
+
+class AlertRule(TimestampMixin, Base):
+    __tablename__ = "alert_rules"
+    __table_args__ = (
+        Index("ix_alert_rules_repo_id_enabled", "repo_id", "enabled"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repo_id: Mapped[int] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(32))
+    threshold: Mapped[float | None] = mapped_column(Float)
+    window_days: Mapped[int | None] = mapped_column(Integer)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    last_value: Mapped[float | None] = mapped_column(Float)
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    repository: Mapped["Repository"] = relationship(back_populates="alert_rules")
+    events: Mapped[list["AlertEvent"]] = relationship(
+        back_populates="rule",
+        passive_deletes=True,
+    )
+
+
+class AlertEvent(TimestampMixin, Base):
+    __tablename__ = "alert_events"
+    __table_args__ = (
+        UniqueConstraint("rule_id", "fingerprint", name="uq_alert_events_rule_fingerprint"),
+        Index("ix_alert_events_created_at", "created_at"),
+        Index("ix_alert_events_acknowledged_created", "acknowledged_at", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_id: Mapped[int | None] = mapped_column(
+        ForeignKey("alert_rules.id", ondelete="SET NULL"), index=True
+    )
+    repo_id: Mapped[int | None] = mapped_column(
+        ForeignKey("repositories.id", ondelete="SET NULL"), index=True
+    )
+    repository_full_name: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(32))
+    fingerprint: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str] = mapped_column(String(255))
+    message: Mapped[str] = mapped_column(Text)
+    current_value: Mapped[float | None] = mapped_column(Float)
+    threshold: Mapped[float | None] = mapped_column(Float)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivery_status: Mapped[str] = mapped_column(
+        String(24), default="inbox_only", server_default="inbox_only"
+    )
+    delivery_error: Mapped[str | None] = mapped_column(Text)
+
+    rule: Mapped["AlertRule | None"] = relationship(back_populates="events")
