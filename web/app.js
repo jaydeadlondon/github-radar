@@ -10,6 +10,7 @@ const state = {
   compare: new Set(),
   alertView: "unread",
   alertKind: "",
+  alertSection: "inbox",
   alertsOpen: false,
   bursts: [],
   activeBurst: false,
@@ -195,7 +196,7 @@ function setAlertsOpen(open) {
   el("alerts-toggle").setAttribute("aria-expanded", String(open));
   if (open) {
     loadAlertSummary();
-    loadAlertEvents();
+    setAlertSection(state.alertSection);
     el("alerts-panel").scrollIntoView({ behavior: "smooth", block: "start" });
   } else if (alertEventsAbortController) {
     alertEventsAbortController.abort();
@@ -228,6 +229,149 @@ function startAlertPolling() {
 function stopAlertPolling() {
   clearInterval(alertPollTimer);
   alertPollTimer = null;
+}
+let alertRulesAbortController = null;
+function ruleCondition(rule) {
+  if (rule.kind === "velocity_above") {
+    return `${rule.threshold} stars/day over ${rule.window_days} days`;
+  }
+  if (rule.kind === "stars_reached") {
+    return `${formatNumber(rule.threshold)} stars`;
+  }
+  return "When a new burst starts";
+}
+function renderAlertRules(payload) {
+  const container = el("alert-rules");
+  if (!payload.items.length) {
+    container.innerHTML =
+      '<div class="empty">No alert rules yet.<div class="hint">Create one above to start watching a repository.</div></div>';
+    return;
+  }
+  container.innerHTML = payload.items
+    .map(
+      (rule) => `
+        <article class="alert-rule ${rule.enabled ? "enabled" : "disabled"}">
+          <div>
+            <div class="alert-rule-title">
+              <strong>${escapeHtml(rule.repository)}</strong>
+              <span class="alert-kind">${escapeHtml(alertKindLabel(rule.kind))}</span>
+            </div>
+            <p>${escapeHtml(ruleCondition(rule))}</p>
+          </div>
+          <div class="alert-rule-actions">
+            <button class="btn small" data-rule-action="toggle" data-rule-id="${rule.id}"
+              data-rule-enabled="${rule.enabled}">
+              ${rule.enabled ? "Disable" : "Enable"}
+            </button>
+            <button class="btn small danger" data-rule-action="delete" data-rule-id="${rule.id}">
+              Delete
+            </button>
+          </div>
+        </article>`,
+    )
+    .join("");
+}
+async function loadAlertRules() {
+  if (!state.alertsOpen || state.alertSection !== "rules") return;
+  if (alertRulesAbortController) alertRulesAbortController.abort();
+  alertRulesAbortController = new AbortController();
+  el("alert-rules").innerHTML =
+    '<div class="empty"><span class="spinner"></span> Loading rules…</div>';
+  try {
+    const payload = await fetchJSON(
+      `${API}/alerts/rules?limit=100`,
+      alertRulesAbortController.signal,
+    );
+    renderAlertRules(payload);
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    el("alert-rules").innerHTML =
+      `<div class="empty">Failed to load rules.<div class="hint">${escapeHtml(err.message)}</div></div>`;
+  }
+}
+async function loadAlertRuleRepositories() {
+  const select = el("alert-rule-repository");
+  try {
+    const payload = await fetchJSON(`${API}/repos?sort=name&limit=100`);
+    select.innerHTML =
+      '<option value="">Select a tracked repository</option>' +
+      payload.items
+        .map(
+          (repo) =>
+            `<option value="${escapeHtml(repo.full_name)}">${escapeHtml(repo.full_name)}</option>`,
+        )
+        .join("");
+    el("alert-rule-submit").disabled = payload.items.length === 0;
+  } catch (err) {
+    select.innerHTML = '<option value="">Repositories unavailable</option>';
+    el("alert-rule-submit").disabled = true;
+    toast(`Alert rules: ${err.message}`, "warn");
+  }
+}
+function syncAlertRuleFields() {
+  const kind = el("alert-rule-kind").value;
+  const needsThreshold = kind !== "burst_started";
+  const needsWindow = kind === "velocity_above";
+  el("alert-threshold-field").hidden = !needsThreshold;
+  el("alert-window-field").hidden = !needsWindow;
+  el("alert-rule-threshold").required = needsThreshold;
+  el("alert-rule-window").required = needsWindow;
+  el("alert-rule-threshold").step = kind === "stars_reached" ? "1" : "0.01";
+}
+async function createAlertRule(event) {
+  event.preventDefault();
+  const kind = el("alert-rule-kind").value;
+  const threshold = el("alert-rule-threshold").value;
+  const payload = {
+    repository: el("alert-rule-repository").value,
+    kind,
+    threshold: kind === "burst_started" ? null : Number(threshold),
+    window_days:
+      kind === "velocity_above" ? Number(el("alert-rule-window").value) : null,
+  };
+  try {
+    await sendJSON(`${API}/alerts/rules`, "POST", payload);
+    toast("Alert rule created");
+    el("alert-rule-form").reset();
+    syncAlertRuleFields();
+    await Promise.all([loadAlertRules(), loadAlertSummary()]);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+async function changeAlertRule(ruleId, action, currentlyEnabled) {
+  try {
+    if (action === "delete") {
+      if (!window.confirm("Delete this alert rule? Existing events will be kept.")) return;
+      await sendJSON(`${API}/alerts/rules/${ruleId}`, "DELETE");
+      toast("Alert rule deleted");
+    } else {
+      await sendJSON(`${API}/alerts/rules/${ruleId}`, "PATCH", {
+        enabled: !currentlyEnabled,
+      });
+      toast(`Alert rule ${currentlyEnabled ? "disabled" : "enabled"}`);
+    }
+    await Promise.all([loadAlertRules(), loadAlertSummary()]);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+function setAlertSection(section) {
+  state.alertSection = section;
+  el("alert-inbox-pane").hidden = section !== "inbox";
+  el("alert-rules-pane").hidden = section !== "rules";
+  el("acknowledge-all").hidden = section !== "inbox";
+  el("alert-section")
+    .querySelectorAll("button")
+    .forEach((button) => {
+      button.classList.toggle("active", button.dataset.section === section);
+    });
+  if (section === "rules") {
+    loadAlertRuleRepositories();
+    loadAlertRules();
+  } else {
+    loadAlertEvents();
+  }
 }
 /* ---------- repositories table ---------- */
 function renderReposTable(payload) {
@@ -653,11 +797,27 @@ function init() {
   applyTheme();
   renderCompareBar();
   syncToolbar();
+  syncAlertRuleFields();
   el("alerts-toggle").addEventListener("click", () => {
     setAlertsOpen(!state.alertsOpen);
   });
   el("alerts-close").addEventListener("click", () => setAlertsOpen(false));
   el("acknowledge-all").addEventListener("click", acknowledgeAllAlerts);
+  el("alert-section").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-section]");
+    if (button) setAlertSection(button.dataset.section);
+  });
+  el("alert-rule-kind").addEventListener("change", syncAlertRuleFields);
+  el("alert-rule-form").addEventListener("submit", createAlertRule);
+  el("alert-rules").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-rule-action]");
+    if (!button) return;
+    changeAlertRule(
+      button.dataset.ruleId,
+      button.dataset.ruleAction,
+      button.dataset.ruleEnabled === "true",
+    );
+  });
   el("alert-view").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-view]");
     if (!button) return;

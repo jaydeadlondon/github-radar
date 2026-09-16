@@ -279,6 +279,70 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.alert-section-tabs {
+  margin-top: 16px;
+}
+.alert-rule-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.alert-rule-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+.alert-rule-form input,
+.alert-rule-form select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text);
+}
+.alert-rules {
+  display: grid;
+  gap: 8px;
+}
+.alert-rule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.alert-rule.disabled {
+  opacity: 0.65;
+}
+.alert-rule-title,
+.alert-rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.alert-rule p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.btn.danger {
+  color: var(--red);
+}
+.btn.danger:hover {
+  border-color: var(--red);
+}
 /* Layout grid */
 .grid {
   display: grid;
@@ -603,6 +667,13 @@ body.light {
   .alert-ack {
     grid-column: 2;
     justify-self: start;
+  }
+  .alert-rule-form {
+    grid-template-columns: 1fr;
+  }
+  .alert-rule {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .topbar {
     padding: 10px 16px;
