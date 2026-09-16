@@ -50,6 +50,16 @@
       </div>
       <div class="topbar-actions">
         <button
+          id="alerts-toggle"
+          class="icon-btn alert-bell"
+          title="Open alerts"
+          aria-label="Open alerts"
+          aria-expanded="false"
+        >
+          🔔
+          <span id="alert-count" class="alert-count" hidden>0</span>
+        </button>
+        <button
           id="theme-toggle"
           class="icon-btn"
           title="Toggle theme"
@@ -78,6 +88,40 @@
           <option value="all">All time</option>
         </select>
         <button id="refresh-btn" class="btn">Refresh</button>
+      </section>
+      <section class="card alerts-panel" id="alerts-panel" hidden>
+        <div class="alerts-head">
+          <div>
+            <h2>Alert inbox</h2>
+            <p id="alerts-summary">Loading alert status…</p>
+          </div>
+          <div class="alerts-actions">
+            <button id="acknowledge-all" class="btn small">Mark all read</button>
+            <button
+              id="alerts-close"
+              class="icon-btn"
+              aria-label="Close alerts"
+              title="Close alerts"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <div class="alerts-filters">
+          <div class="seg" id="alert-view" role="group" aria-label="Alert status">
+            <button class="active" data-view="unread">Unread</button>
+            <button data-view="all">All</button>
+          </div>
+          <select id="alert-kind-filter" aria-label="Filter alerts by type">
+            <option value="">All alert types</option>
+            <option value="burst_started">Bursts</option>
+            <option value="velocity_above">Velocity</option>
+            <option value="stars_reached">Milestones</option>
+          </select>
+        </div>
+        <div id="alert-events" class="alert-events">
+          <div class="empty">Loading alerts…</div>
+        </div>
       </section>
       <section class="grid">
         <div class="card">
