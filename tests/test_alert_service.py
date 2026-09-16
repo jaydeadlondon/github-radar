@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 
 from alerts import STARS_REACHED, VELOCITY_ABOVE, RuleSpec
-from alerts.service import evaluate_milestone_rule
+from alerts.service import evaluate_milestone_rule, evaluate_velocity_rule
 from db.alerts import create_rule, list_events
 from db.repositories import upsert_repository
 from github.models import RepoSummary
@@ -89,3 +89,87 @@ async def test_milestone_evaluator_rejects_other_rule_kind(db_session) -> None:
 
     with pytest.raises(ValueError, match="expected a stars_reached"):
         await evaluate_milestone_rule(db_session, rule, 1000)
+
+
+async def test_velocity_rule_triggers_once_when_threshold_is_crossed(db_session) -> None:
+    rule = await _rule(
+        db_session,
+        kind=VELOCITY_ABOVE,
+        threshold=10,
+        window_days=7,
+    )
+
+    below = await evaluate_velocity_rule(
+        db_session, rule, 9.5, evaluated_at=EVALUATED_AT
+    )
+    crossed = await evaluate_velocity_rule(
+        db_session, rule, 10.5, evaluated_at=EVALUATED_AT
+    )
+    repeated = await evaluate_velocity_rule(
+        db_session, rule, 12, evaluated_at=EVALUATED_AT
+    )
+
+    assert below is None
+    assert crossed is not None
+    assert crossed.fingerprint == "velocity:7:10:2026-09-16"
+    assert repeated is None
+    assert rule.last_value == 12
+
+
+async def test_velocity_rule_can_trigger_after_dropping_below_again(db_session) -> None:
+    rule = await _rule(
+        db_session,
+        kind=VELOCITY_ABOVE,
+        threshold=10,
+        window_days=30,
+    )
+
+    first = await evaluate_velocity_rule(
+        db_session, rule, 11, evaluated_at=EVALUATED_AT
+    )
+    await evaluate_velocity_rule(db_session, rule, 8, evaluated_at=EVALUATED_AT)
+    second = await evaluate_velocity_rule(
+        db_session,
+        rule,
+        13,
+        evaluated_at=datetime(2026, 9, 17, 12, tzinfo=UTC),
+    )
+    await db_session.commit()
+
+    assert first is not None and second is not None
+    events, total = await list_events(db_session)
+    assert total == 2
+    assert {event.fingerprint for event in events} == {
+        "velocity:30:10:2026-09-16",
+        "velocity:30:10:2026-09-17",
+    }
+
+
+async def test_disabled_velocity_rule_only_updates_last_value(db_session) -> None:
+    rule = await _rule(
+        db_session,
+        kind=VELOCITY_ABOVE,
+        threshold=10,
+        window_days=90,
+        enabled=False,
+    )
+
+    event = await evaluate_velocity_rule(db_session, rule, 20)
+
+    assert event is None
+    assert rule.last_value == 20
+
+
+async def test_velocity_evaluator_requires_complete_velocity_rule(db_session) -> None:
+    milestone = await _rule(db_session)
+    with pytest.raises(ValueError, match="expected a velocity_above"):
+        await evaluate_velocity_rule(db_session, milestone, 20)
+
+    incomplete = await _rule(
+        db_session,
+        kind=VELOCITY_ABOVE,
+        threshold=10,
+        window_days=None,
+    )
+    with pytest.raises(ValueError, match="missing threshold or window_days"):
+        await evaluate_velocity_rule(db_session, incomplete, 20)
