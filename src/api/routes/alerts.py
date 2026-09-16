@@ -5,9 +5,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from alerts import RuleSpec, validate_rule
 from api.deps import get_session
-from api.schemas import AlertRuleCreate, AlertRuleOut, AlertRuleUpdate, Paginated
-from db.alerts import create_rule, delete_rule, get_rule, list_rules
-from db.models import AlertRule
+from api.schemas import (
+    AcknowledgeAllOut,
+    AlertEventOut,
+    AlertEventUpdate,
+    AlertKind,
+    AlertRuleCreate,
+    AlertRuleOut,
+    AlertRuleUpdate,
+    AlertSummaryOut,
+    Paginated,
+)
+from db.alerts import (
+    acknowledge_all_events,
+    alert_summary,
+    create_rule,
+    delete_rule,
+    get_event,
+    get_rule,
+    list_events,
+    list_rules,
+    set_event_acknowledged,
+)
+from db.models import AlertEvent, AlertRule
 from db.repositories import get_repository_by_name
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
@@ -151,3 +171,95 @@ async def remove_rule(
     await delete_rule(session, rule)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _event_out(event: AlertEvent) -> AlertEventOut:
+    return AlertEventOut(
+        id=event.id,
+        rule_id=event.rule_id,
+        repository=event.repository_full_name,
+        kind=event.kind,
+        title=event.title,
+        message=event.message,
+        current_value=event.current_value,
+        threshold=event.threshold,
+        acknowledged_at=event.acknowledged_at,
+        delivery_status=event.delivery_status,
+        delivery_error=event.delivery_error,
+        created_at=event.created_at,
+    )
+
+
+async def _event_or_404(session: AsyncSession, event_id: int) -> AlertEvent:
+    event = await get_event(session, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail=f"alert event {event_id} not found")
+    return event
+
+
+@router.get("/events", response_model=Paginated[AlertEventOut])
+async def get_events(
+    repository: str | None = Query(default=None),
+    kind: AlertKind | None = Query(default=None),
+    acknowledged: bool | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> Paginated[AlertEventOut]:
+    events, total = await list_events(
+        session,
+        repository=repository,
+        kind=kind,
+        acknowledged=acknowledged,
+        limit=limit,
+        offset=offset,
+    )
+    next_offset = offset + len(events) if offset + len(events) < total else None
+    return Paginated(
+        total=total,
+        offset=offset,
+        limit=limit,
+        next_offset=next_offset,
+        items=[_event_out(event) for event in events],
+    )
+
+
+@router.post("/events/acknowledge-all", response_model=AcknowledgeAllOut)
+async def acknowledge_every_event(
+    session: AsyncSession = Depends(get_session),
+) -> AcknowledgeAllOut:
+    changed = await acknowledge_all_events(session)
+    await session.commit()
+    return AcknowledgeAllOut(acknowledged=changed)
+
+
+@router.get("/events/{event_id}", response_model=AlertEventOut)
+async def get_event_by_id(
+    event_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> AlertEventOut:
+    return _event_out(await _event_or_404(session, event_id))
+
+
+@router.patch("/events/{event_id}", response_model=AlertEventOut)
+async def patch_event(
+    event_id: int,
+    payload: AlertEventUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> AlertEventOut:
+    event = await _event_or_404(session, event_id)
+    await set_event_acknowledged(session, event, payload.acknowledged)
+    await session.commit()
+    return _event_out(event)
+
+
+@router.get("/summary", response_model=AlertSummaryOut)
+async def get_alert_summary(
+    session: AsyncSession = Depends(get_session),
+) -> AlertSummaryOut:
+    active_rules, unread_events, last_event_at = await alert_summary(session)
+    return AlertSummaryOut(
+        active_rules=active_rules,
+        unread_events=unread_events,
+        last_event_at=last_event_at,
+    )
