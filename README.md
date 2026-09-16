@@ -4,8 +4,8 @@ Analytics service that tracks rising stars on GitHub: it collects data about
 repositories, builds star-growth history, and detects projects that are
 "taking off" before everyone else.
 
-> **Status:** version 0.6 — CLI collector, storage, REST API, analytics engine,
-> background scheduler and a web dashboard with comparison charts.
+> **Status:** version 0.7 — CLI collector, storage, REST API, analytics engine,
+> background scheduler, persistent alerts, optional webhooks and a web dashboard.
 
 ## Features
 
@@ -17,10 +17,13 @@ repositories, builds star-growth history, and detects projects that are
 - `radar velocity owner/name` — stars/day over 7/30/90 days plus an OLS trend
 - `radar bursts owner/name` — detected star bursts with severity scores
 - `radar leaderboard` — the fastest growing tracked repositories
+- `radar alerts ...` — create and manage rules, inspect and acknowledge events
 - `radar serve` — REST API server
-- REST API: repositories, history, trends, languages, analytics, health
+- REST API: repositories, history, trends, languages, analytics, alerts, health
 - Analytics engine: daily star series, sliding-window velocity, trend slope,
   z-score burst detection and multi-repository comparison
+- Persistent alert engine for new bursts, velocity crossings and star milestones
+- Alert inbox in the dashboard plus optional generic JSON webhook delivery
 - Background snapshots on a schedule (APScheduler, opt-in)
 - Smart GitHub API client: rate-limit retries, pagination, ETag request caching
 
@@ -43,6 +46,16 @@ cp .env.example .env
 Token: GitHub → Settings → Developer settings → Personal access tokens →
 Generate new token (the `public_repo` scope is enough).
 
+Create a new database with `radar init-db`. When upgrading an existing checkout,
+apply all migrations before starting the application:
+
+```bash
+alembic upgrade head
+```
+
+The 0.7 migration creates `alert_rules` and `alert_events`; it does not modify
+stored repositories or snapshot history.
+
 ## Usage
 
 ```bash
@@ -63,6 +76,15 @@ radar history psf/requests --days 30
 radar velocity psf/requests --history-days 180
 radar bursts psf/requests --days 90
 radar leaderboard --window 7 --limit 20
+
+# Alerts (the repository must already be tracked)
+radar alerts add psf/requests --type milestone --threshold 100000
+radar alerts add psf/requests --type velocity --threshold 100 --window 7
+radar alerts add psf/requests --type burst
+radar alerts list
+radar alerts events --unread
+radar alerts acknowledge 1
+radar alerts acknowledge-all --yes
 ```
 
 ## REST API
@@ -88,6 +110,12 @@ Interactive docs: <http://127.0.0.1:8000/docs> (OpenAPI).
 | GET | `/api/v1/analytics/leaderboard` | Fastest growing repos (`window` 7/30/90, `language`, `limit`, `offset`) |
 | GET | `/api/v1/analytics/series/{owner}/{name}` | Daily star series with deltas (`days`, `smooth`) |
 | GET | `/api/v1/analytics/compare` | Up to 5 repositories on one grid (`repos`, `window`, `mode`) |
+| GET, POST | `/api/v1/alerts/rules` | List or create alert rules |
+| GET, PATCH, DELETE | `/api/v1/alerts/rules/{rule_id}` | Inspect, update or delete one rule |
+| GET | `/api/v1/alerts/events` | Paginated inbox (`acknowledged`, `kind`) |
+| GET, PATCH | `/api/v1/alerts/events/{event_id}` | Inspect or acknowledge one event |
+| POST | `/api/v1/alerts/events/acknowledge-all` | Acknowledge all unread events |
+| GET | `/api/v1/alerts/summary` | Unread, event and enabled-rule counts |
 
 Examples:
 
@@ -99,6 +127,10 @@ curl http://127.0.0.1:8000/api/v1/analytics/velocity/psf/requests?windows=7,30
 curl http://127.0.0.1:8000/api/v1/analytics/leaderboard?window=30&limit=10
 curl "http://127.0.0.1:8000/api/v1/analytics/series/psf/requests?days=90&smooth=7"
 curl "http://127.0.0.1:8000/api/v1/analytics/compare?repos=psf/requests,pallets/flask&mode=percent"
+curl -X POST http://127.0.0.1:8000/api/v1/alerts/rules \
+  -H 'Content-Type: application/json' \
+  -d '{"repository":"psf/requests","kind":"stars_reached","threshold":100000}'
+curl "http://127.0.0.1:8000/api/v1/alerts/events?acknowledged=false"
 ```
 
 Error responses use a consistent shape: `{"detail": "...", "code": 404}`.
@@ -133,6 +165,31 @@ RADAR_ANALYTICS_BURST_MIN_DAYS=2    # minimum burst length, days
 RADAR_ANALYTICS_HISTORY_DAYS=180    # how deep analytics reads history
 ```
 
+## Alerts and webhooks
+
+Alert rules are evaluated after each successful manual or scheduled snapshot:
+
+- `stars_reached` fires once when stars reach a configured milestone
+- `velocity_above` fires when a 7/30/90-day velocity crosses its threshold from below
+- `burst_started` fires once for each newly detected burst start
+
+Each event is stored in the inbox before delivery. A unique rule/fingerprint key
+makes evaluation idempotent across retries, and deleting a rule or repository
+retains its denormalized event history. Delivery failures are recorded on the
+event and never fail the snapshot job.
+
+Webhooks are optional and use one generic JSON target:
+
+```bash
+RADAR_ALERTS_ENABLED=true
+RADAR_ALERT_WEBHOOK_URL=https://example.com/hooks/github-radar
+RADAR_ALERT_WEBHOOK_TIMEOUT_SECONDS=10
+```
+
+Leave `RADAR_ALERT_WEBHOOK_URL` empty for inbox-only operation. The configured URL
+is never exposed by the API; use HTTPS and treat embedded webhook credentials as
+secrets.
+
 ## Background snapshots
 
 The API can refresh snapshots on its own — the scheduler starts with the app and
@@ -160,6 +217,9 @@ The dashboard is served by the API at <http://127.0.0.1:8000/> — start it with
 - Comparison mode: tick up to 5 repositories and overlay their curves —
   absolute, indexed to 100, or percent growth
 - "Fastest growing" panel — real stars/day over 7 / 30 / 90 days
+- Alert bell with unread count, filterable inbox and read acknowledgements
+- Alert-rule editor for burst, velocity and milestone rules
+- Visibility-aware 30-second alert polling (no WebSocket or external service needed)
 - PNG export of the current chart
 - Dark / light theme (remembered in localStorage), mobile-friendly layout
 
@@ -168,8 +228,9 @@ The frontend is plain HTML/CSS/JS with ECharts bundled locally in
 
 ## Tests and linter
 
-The 140-test suite includes the original split analytics tests for series,
-velocity, bursts and API behavior, plus the 0.6 comparison and regression cases.
+The 233-test suite preserves the 0.6 analytics and API coverage and adds alert
+migration, evaluation, deduplication, webhook, snapshot, API, CLI and dashboard
+regression tests.
 
 ```bash
 pip install -e ".[dev]"
@@ -186,6 +247,7 @@ src/
 ├── github/          # GitHub API client: models, errors, client
 ├── collector/       # CLI (typer), store, snapshot pipeline and scheduler
 ├── analytics/       # star series, velocity, trend slope, bursts, comparison
+├── alerts/          # rule validation, evaluators, orchestration and webhooks
 ├── db/              # SQLAlchemy async: engine, models, db helpers
 └── api/             # FastAPI: app, deps, schemas, routes/
 web/                 # dashboard: index.html, app.js, charts.js, styles.css

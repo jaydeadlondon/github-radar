@@ -2,6 +2,43 @@
 
 All notable changes to this project.
 
+## [0.7.0] — 2026-09-16
+
+### Added
+
+- Persistent `AlertRule` and `AlertEvent` models with Alembic migration `0003`,
+  indexed inbox queries and retained event history when rules or repositories are deleted
+- Three alert types evaluated from committed snapshots:
+  - `stars_reached` for one-time star milestones
+  - `velocity_above` for 7/30/90-day threshold crossings from below
+  - `burst_started` for newly detected burst start dates
+- Database-backed event fingerprinting and atomic duplicate suppression, making
+  repeated and concurrent evaluation idempotent
+- Optional generic JSON webhook delivery with configurable timeout, per-event
+  `inbox_only` / `sent` / `failed` status and snapshot-failure isolation
+- Alert evaluation after both manual and scheduled snapshot collection
+- Alert REST API: rule CRUD, paginated/filterable event inbox, single and bulk
+  acknowledgement, and summary counts under `/api/v1/alerts`
+- Nested CLI commands: `radar alerts add|list|enable|disable|delete` and
+  `radar alerts events|acknowledge|acknowledge-all`
+- Dashboard alert bell and unread badge, inbox filters and acknowledgements,
+  alert-rule editor, and visibility-aware 30-second polling
+- Migration, evaluator, deduplication, webhook, snapshot, API, CLI and dashboard
+  regression coverage (233 tests total)
+
+### Changed
+
+- Package version and GitHub client user agent are now 0.7
+- Snapshot persistence is committed before isolated alert evaluation begins
+- The existing 0.6 analytics, REST API and dashboard behavior remains backward compatible
+
+### Fixed
+
+- New burst rules use an evaluation watermark and short lookback instead of
+  replaying a repository's full historical burst list
+- Webhook transport errors are recorded without persisting or logging a
+  potentially credential-bearing target URL
+
 ## [0.6.0] — 2026-09-15
 
 ### Added
