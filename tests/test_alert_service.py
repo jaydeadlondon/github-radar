@@ -1,9 +1,14 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
-from alerts import STARS_REACHED, VELOCITY_ABOVE, RuleSpec
-from alerts.service import evaluate_milestone_rule, evaluate_velocity_rule
+from alerts import BURST_STARTED, STARS_REACHED, VELOCITY_ABOVE, RuleSpec
+from alerts.service import (
+    evaluate_burst_rule,
+    evaluate_milestone_rule,
+    evaluate_velocity_rule,
+)
+from analytics.types import BurstEvent
 from db.alerts import create_rule, list_events
 from db.repositories import upsert_repository
 from github.models import RepoSummary
@@ -175,3 +180,62 @@ async def test_velocity_evaluator_requires_complete_velocity_rule(db_session) ->
     )
     with pytest.raises(ValueError, match="missing threshold or window_days"):
         await evaluate_velocity_rule(db_session, incomplete, 20)
+
+
+def _burst(start_day: date, peak_delta: int = 100) -> BurstEvent:
+    return BurstEvent(
+        start_day=start_day,
+        end_day=start_day,
+        duration_days=1,
+        peak_day=start_day,
+        peak_delta=peak_delta,
+        total_gained=peak_delta,
+        severity=3.0,
+    )
+
+
+async def test_burst_rule_inserts_each_new_burst_once(db_session) -> None:
+    rule = await _rule(
+        db_session,
+        kind=BURST_STARTED,
+        threshold=None,
+    )
+    events = [_burst(date(2026, 9, 14)), _burst(date(2026, 9, 16), 250)]
+
+    first = await evaluate_burst_rule(
+        db_session, rule, events, evaluated_at=EVALUATED_AT
+    )
+    repeated = await evaluate_burst_rule(
+        db_session, rule, events, evaluated_at=EVALUATED_AT
+    )
+    await db_session.commit()
+
+    assert len(first) == 2
+    assert repeated == []
+    stored, total = await list_events(db_session)
+    assert total == 2
+    assert {event.fingerprint for event in stored} == {
+        "burst:2026-09-14",
+        "burst:2026-09-16",
+    }
+    assert rule.last_evaluated_at == EVALUATED_AT
+
+
+async def test_disabled_burst_rule_does_not_insert_events(db_session) -> None:
+    rule = await _rule(
+        db_session,
+        kind=BURST_STARTED,
+        threshold=None,
+        enabled=False,
+    )
+
+    events = await evaluate_burst_rule(db_session, rule, [_burst(date(2026, 9, 16))])
+
+    assert events == []
+    assert rule.last_evaluated_at is not None
+
+
+async def test_burst_evaluator_rejects_other_rule_kind(db_session) -> None:
+    rule = await _rule(db_session)
+    with pytest.raises(ValueError, match="expected a burst_started"):
+        await evaluate_burst_rule(db_session, rule, [])

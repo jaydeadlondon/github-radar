@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from alerts.evaluation import milestone_candidate, velocity_candidate
-from alerts.types import STARS_REACHED, VELOCITY_ABOVE
+from alerts.evaluation import burst_candidates, milestone_candidate, velocity_candidate
+from alerts.types import BURST_STARTED, STARS_REACHED, VELOCITY_ABOVE
+from analytics.types import BurstEvent
 from db.alerts import create_event
 from db.models import AlertEvent, AlertRule
 
@@ -39,6 +41,28 @@ async def evaluate_milestone_rule(
     if candidate is None:
         return None
     return await create_event(session, rule, candidate)
+
+
+async def evaluate_burst_rule(
+    session: AsyncSession,
+    rule: AlertRule,
+    events: Sequence[BurstEvent],
+    *,
+    evaluated_at: datetime | None = None,
+) -> list[AlertEvent]:
+    if rule.kind != BURST_STARTED:
+        raise ValueError("expected a burst_started rule")
+
+    rule.last_evaluated_at = _evaluation_time(evaluated_at)
+    if not rule.enabled:
+        return []
+
+    inserted: list[AlertEvent] = []
+    for candidate in burst_candidates(rule.repository.full_name, events):
+        event = await create_event(session, rule, candidate)
+        if event is not None:
+            inserted.append(event)
+    return inserted
 
 
 async def evaluate_velocity_rule(
