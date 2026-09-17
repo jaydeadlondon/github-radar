@@ -167,3 +167,32 @@ class AlertRuleOut(BaseModel):
     last_evaluated_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class AlertEventOut(BaseModel):
+    id: int
+    rule_id: int | None
+    repository: str
+    kind: AlertKind
+    title: str
+    message: str
+    current_value: float | None
+    threshold: float | None
+    acknowledged_at: datetime | None
+    delivery_status: Literal["inbox_only", "sent", "failed"]
+    delivery_error: str | None
+    created_at: datetime
+
+
+class AlertEventUpdate(BaseModel):
+    acknowledged: bool
+
+
+class AlertSummaryOut(BaseModel):
+    active_rules: int
+    unread_events: int
+    last_event_at: datetime | None
+
+
+class AcknowledgeAllOut(BaseModel):
+    acknowledged: int
