@@ -2,6 +2,44 @@
 
 All notable changes to this project.
 
+## [0.8.0] — 2026-09-18
+
+### Added
+
+- Managed repository tracking with explicit `repos add|remove|list|pause|resume|refresh`
+  commands and idempotent track/untrack/pause/resume domain operations
+- Additive migration `0004` with tracking controls, labels, archived/default-branch
+  metadata, snapshot attempt/success/error timestamps and next-run information
+- Collection-health states (`healthy`, `stale`, `failed`, `paused`, `untracked`),
+  snapshot counts and history-start metadata in the REST API and dashboard
+- Tracking REST API for `/track`, `/tracking`, `/status` and manual `/refresh`,
+  including label/status filters on repository listing
+- Snapshot data-quality layer: UTC normalization, same-timestamp deduplication,
+  rejected invalid/decreasing observations, explicit anomaly reasons and safe
+  failure recording without zero-valued snapshots
+- Resumable CLI backfill from GitHub stargazer timestamps with dry-run, page and
+  missing-point limits; paused/untracked repositories are skipped by default
+- Stable JSON and CSV analytics exports from the CLI and series/leaderboard API
+  endpoints
+- Dashboard tracking controls, label/status filters, health badges, last-error
+  visibility, manual refresh and an insufficient-history state
+- Migration, tracking, data-quality, pipeline, backfill, export, API, CLI and
+  dashboard regression coverage
+
+### Changed
+
+- Package and GitHub client user-agent versions are now 0.8
+- Snapshot collection commits attempt state and each repository result independently;
+  paused and untracked repositories are not scheduled
+- Existing v0.7 repositories remain tracked on upgrade and existing snapshots are
+  treated as accepted observations; no history is deleted
+
+### Fixed
+
+- GitHub failures no longer look like a zero star delta
+- Analytics and leaderboard queries ignore rejected quality records while retaining
+  them for audit
+
 ## [0.7.0] — 2026-09-18
 
 ### Added
