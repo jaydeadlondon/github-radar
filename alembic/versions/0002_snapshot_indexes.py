@@ -1,4 +1,5 @@
-"""add composite snapshot index
+"""
+Add composite snapshot index
 
 Revision ID: 0002
 Revises: 0001
