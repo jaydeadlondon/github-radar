@@ -8,6 +8,9 @@ const state = {
   smooth: localStorage.getItem("radar-smooth") === "1",
   logScale: false,
   compare: new Set(),
+  alertView: "unread",
+  alertKind: "",
+  alertsOpen: false,
   bursts: [],
   activeBurst: false,
   selectedRepo: null,
@@ -45,6 +48,22 @@ async function fetchJSON(path, signal) {
   }
   return response.json();
 }
+async function sendJSON(path, method, body) {
+  const response = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (payload && payload.detail) message = payload.detail;
+    } catch (_) {}
+    throw new Error(message);
+  }
+  return response.status === 204 ? null : response.json();
+}
 function toast(message, type = "") {
   const container = el("toasts");
   const node = document.createElement("div");
@@ -55,6 +74,10 @@ function toast(message, type = "") {
 }
 function formatNumber(value) {
   return new Intl.NumberFormat("en-US", { notation: "compact" }).format(value);
+}
+function formatDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
 }
 function escapeHtml(value) {
   return String(value)
@@ -73,6 +96,140 @@ async function refreshStatusBadge() {
   } catch (_) {
     badge.textContent = "● offline";
   }
+}
+/* ---------- alert inbox ---------- */
+const ALERT_POLL_MS = 30000;
+let alertEventsAbortController = null;
+let alertPollTimer = null;
+function alertKindLabel(kind) {
+  return (
+    {
+      burst_started: "Burst",
+      velocity_above: "Velocity",
+      stars_reached: "Milestone",
+    }[kind] || kind
+  );
+}
+function renderAlertSummary(payload) {
+  const count = el("alert-count");
+  count.textContent = String(payload.unread_events);
+  count.hidden = payload.unread_events === 0;
+  el("alerts-summary").textContent =
+    `${payload.unread_events} unread · ${payload.active_rules} active rule(s)`;
+  el("acknowledge-all").disabled = payload.unread_events === 0;
+}
+async function loadAlertSummary() {
+  try {
+    renderAlertSummary(await fetchJSON(`${API}/alerts/summary`));
+  } catch (err) {
+    if (state.alertsOpen) toast(`Alerts: ${err.message}`, "warn");
+  }
+}
+function renderAlertEvents(payload) {
+  const container = el("alert-events");
+  if (!payload.items.length) {
+    container.innerHTML = `<div class="empty">${state.alertView === "unread" ? "No unread alerts." : "No alert events yet."}</div>`;
+    return;
+  }
+  container.innerHTML = payload.items
+    .map((event) => {
+      const read = Boolean(event.acknowledged_at);
+      const delivery = event.delivery_status.replaceAll("_", " ");
+      return `
+        <article class="alert-event ${read ? "read" : "unread"}">
+          <div class="alert-event-icon" aria-hidden="true">${
+            event.kind === "burst_started"
+              ? "⚡"
+              : event.kind === "stars_reached"
+                ? "★"
+                : "↗"
+          }</div>
+          <div class="alert-event-body">
+            <div class="alert-event-meta">
+              <span class="alert-kind">${escapeHtml(alertKindLabel(event.kind))}</span>
+              <time datetime="${escapeHtml(event.created_at)}">${escapeHtml(formatDate(event.created_at))}</time>
+            </div>
+            <strong>${escapeHtml(event.title)}</strong>
+            <p>${escapeHtml(event.message)}</p>
+            <div class="alert-event-footer">
+              <button class="link-btn" data-repository="${escapeHtml(event.repository)}">
+                ${escapeHtml(event.repository)}
+              </button>
+              <span class="delivery ${escapeHtml(event.delivery_status)}">${escapeHtml(delivery)}</span>
+            </div>
+          </div>
+          ${
+            read
+              ? ""
+              : `<button class="btn small alert-ack" data-event-id="${event.id}">Mark read</button>`
+          }
+        </article>`;
+    })
+    .join("");
+}
+async function loadAlertEvents() {
+  if (!state.alertsOpen) return;
+  if (alertEventsAbortController) alertEventsAbortController.abort();
+  alertEventsAbortController = new AbortController();
+  const params = new URLSearchParams({ limit: "50" });
+  if (state.alertView === "unread") params.set("acknowledged", "false");
+  if (state.alertKind) params.set("kind", state.alertKind);
+  el("alert-events").innerHTML =
+    '<div class="empty"><span class="spinner"></span> Loading alerts…</div>';
+  try {
+    const payload = await fetchJSON(
+      `${API}/alerts/events?${params}`,
+      alertEventsAbortController.signal,
+    );
+    renderAlertEvents(payload);
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    el("alert-events").innerHTML =
+      `<div class="empty">Failed to load alerts.<div class="hint">${escapeHtml(err.message)}</div></div>`;
+  }
+}
+function setAlertsOpen(open) {
+  state.alertsOpen = open;
+  el("alerts-panel").hidden = !open;
+  el("alerts-toggle").setAttribute("aria-expanded", String(open));
+  if (open) {
+    loadAlertSummary();
+    loadAlertEvents();
+    el("alerts-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  } else if (alertEventsAbortController) {
+    alertEventsAbortController.abort();
+  }
+}
+async function acknowledgeAlert(eventId) {
+  try {
+    await sendJSON(`${API}/alerts/events/${eventId}`, "PATCH", {
+      acknowledged: true,
+    });
+    await Promise.all([loadAlertSummary(), loadAlertEvents()]);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+async function acknowledgeAllAlerts() {
+  try {
+    const result = await sendJSON(
+      `${API}/alerts/events/acknowledge-all`,
+      "POST",
+    );
+    toast(`Marked ${result.acknowledged} alert(s) as read`);
+    await Promise.all([loadAlertSummary(), loadAlertEvents()]);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+function startAlertPolling() {
+  clearInterval(alertPollTimer);
+  loadAlertSummary();
+  alertPollTimer = setInterval(loadAlertSummary, ALERT_POLL_MS);
+}
+function stopAlertPolling() {
+  clearInterval(alertPollTimer);
+  alertPollTimer = null;
 }
 /* ---------- repositories table ---------- */
 function renderReposTable(payload) {
@@ -498,6 +655,43 @@ function init() {
   applyTheme();
   renderCompareBar();
   syncToolbar();
+  el("alerts-toggle").addEventListener("click", () => {
+    setAlertsOpen(!state.alertsOpen);
+  });
+  el("alerts-close").addEventListener("click", () => setAlertsOpen(false));
+  el("acknowledge-all").addEventListener("click", acknowledgeAllAlerts);
+  el("alert-view").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-view]");
+    if (!button) return;
+    state.alertView = button.dataset.view;
+    el("alert-view")
+      .querySelectorAll("button")
+      .forEach((item) => item.classList.toggle("active", item === button));
+    loadAlertEvents();
+  });
+  el("alert-kind-filter").addEventListener("change", (event) => {
+    state.alertKind = event.target.value;
+    loadAlertEvents();
+  });
+  el("alert-events").addEventListener("click", (event) => {
+    const acknowledge = event.target.closest("button[data-event-id]");
+    if (acknowledge) {
+      acknowledgeAlert(acknowledge.dataset.eventId);
+      return;
+    }
+    const repository = event.target.closest("button[data-repository]");
+    if (repository) {
+      state.search = "";
+      el("search").value = "";
+      setAlertsOpen(false);
+      selectRepo(repository.dataset.repository);
+      loadRepos();
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopAlertPolling();
+    else startAlertPolling();
+  });
   el("language-filter").addEventListener("change", (event) => {
     state.language = event.target.value;
     loadLeaderboardAndRepos();
@@ -551,10 +745,14 @@ function init() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(loadRepos, 300);
   });
-  el("refresh-btn").addEventListener("click", loadLeaderboardAndRepos);
+  el("refresh-btn").addEventListener("click", () => {
+    loadLeaderboardAndRepos();
+    loadAlertSummary();
+  });
   refreshChartColors();
   refreshStatusBadge();
   loadLanguages();
   loadLeaderboardAndRepos();
+  startAlertPolling();
 }
 document.addEventListener("DOMContentLoaded", init);
