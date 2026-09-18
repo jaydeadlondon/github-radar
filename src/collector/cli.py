@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC
 
@@ -12,6 +13,7 @@ from rich.table import Table
 from github.client import GitHubClient
 from github.errors import GitHubError
 from github.models import RepoSummary
+from tracking.service import TrackingError
 from version import __version__
 
 app = typer.Typer(
@@ -24,13 +26,17 @@ alerts_app = typer.Typer(
     help="Manage alert rules and the alert inbox.", no_args_is_help=True
 )
 app.add_typer(alerts_app, name="alerts")
+repos_app = typer.Typer(
+    help="Manage repositories and their tracking state.", no_args_is_help=True
+)
+app.add_typer(repos_app, name="repos")
 
 
 def _run_async(fn: Callable[[], Awaitable[None]]) -> None:
     async def _wrapper() -> None:
         try:
             await fn()
-        except GitHubError as exc:
+        except (GitHubError, TrackingError) as exc:
             console.print(f"[red]Error:[/red] {exc}")
             raise typer.Exit(1) from exc
 
@@ -84,6 +90,225 @@ async def _store_repos(repos: list[RepoSummary]) -> int:
 
     async with SessionFactory() as session:
         return await save_repos(session, repos)
+
+
+def _require_full_name(full_name: str) -> str:
+    value = full_name.strip()
+    if value.count("/") != 1 or any(not part for part in value.split("/")):
+        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
+        raise typer.Exit(2)
+    return value
+
+
+def _render_tracking_table(rows: list[dict[str, object]], title: str) -> None:
+    table = Table(title=title)
+    table.add_column("Repository")
+    table.add_column("Status")
+    table.add_column("Label")
+    table.add_column("Snapshots", justify="right")
+    table.add_column("Last success")
+    table.add_column("Last error")
+    for row in rows:
+        table.add_row(
+            str(row["repository"]),
+            str(row["status"]),
+            str(row["label"] or "—"),
+            str(row["snapshot_count"]),
+            str(row["last_successful_snapshot_at"] or "—"),
+            str(row["last_snapshot_error"] or "—"),
+        )
+    console.print(table)
+
+
+@repos_app.command("add")
+def repos_add(
+    full_name: str = typer.Argument(..., metavar="owner/name"),
+    label: str | None = typer.Option(None, "--label", "-l"),
+) -> None:
+    full_name = _require_full_name(full_name)
+
+    async def _impl() -> None:
+        from db.base import SessionFactory
+        from db.repositories import create_snapshot, upsert_repository
+        from tracking.service import track
+
+        async with GitHubClient() as client:
+            fresh = await client.get_repo(full_name)
+        async with SessionFactory() as session:
+            repo = await upsert_repository(
+                session,
+                fresh,
+                track=True,
+                tracking_label=label.strip() if label else None,
+            )
+            await track(session, repo, label=label)
+            await create_snapshot(
+                session,
+                repo.id,
+                stargazers=fresh.stargazers_count,
+                forks=fresh.forks_count,
+                open_issues=fresh.open_issues_count,
+            )
+            await session.commit()
+        console.print(f"[green]Now tracking {full_name}.[/green]")
+
+    _run_async(_impl)
+
+
+@repos_app.command("remove")
+def repos_remove(full_name: str = typer.Argument(..., metavar="owner/name")) -> None:
+    full_name = _require_full_name(full_name)
+
+    async def _impl() -> None:
+        from db.base import SessionFactory
+        from db.repositories import get_repository_by_name
+        from tracking.service import untrack
+
+        async with SessionFactory() as session:
+            repo = await get_repository_by_name(session, full_name)
+            if repo is None:
+                console.print(f"[red]Repository not known:[/red] {full_name}")
+                raise typer.Exit(1)
+            await untrack(session, repo)
+            await session.commit()
+        console.print(f"[green]Stopped tracking {full_name}; history was kept.[/green]")
+
+    _run_async(_impl)
+
+
+@repos_app.command("pause")
+def repos_pause(full_name: str = typer.Argument(..., metavar="owner/name")) -> None:
+    full_name = _require_full_name(full_name)
+
+    async def _impl() -> None:
+        from db.base import SessionFactory
+        from db.repositories import get_repository_by_name
+        from tracking.service import pause
+
+        async with SessionFactory() as session:
+            repo = await get_repository_by_name(session, full_name)
+            if repo is None:
+                console.print(f"[red]Repository not known:[/red] {full_name}")
+                raise typer.Exit(1)
+            await pause(session, repo)
+            await session.commit()
+        console.print(f"[yellow]Paused tracking for {full_name}.[/yellow]")
+
+    _run_async(_impl)
+
+
+@repos_app.command("resume")
+def repos_resume(full_name: str = typer.Argument(..., metavar="owner/name")) -> None:
+    full_name = _require_full_name(full_name)
+
+    async def _impl() -> None:
+        from db.base import SessionFactory
+        from db.repositories import get_repository_by_name
+        from tracking.service import resume
+
+        async with SessionFactory() as session:
+            repo = await get_repository_by_name(session, full_name)
+            if repo is None:
+                console.print(f"[red]Repository not known:[/red] {full_name}")
+                raise typer.Exit(1)
+            await resume(session, repo)
+            await session.commit()
+        console.print(f"[green]Resumed tracking for {full_name}.[/green]")
+
+    _run_async(_impl)
+
+
+@repos_app.command("refresh")
+def repos_refresh(full_name: str = typer.Argument(..., metavar="owner/name")) -> None:
+    full_name = _require_full_name(full_name)
+
+    async def _impl() -> None:
+        from collector.pipeline import run_snapshot
+        from db.base import SessionFactory
+        from db.repositories import get_repository_by_name
+        from tracking.service import tracking_state
+
+        async with SessionFactory() as session:
+            if await get_repository_by_name(session, full_name) is None:
+                console.print(f"[red]Repository not known:[/red] {full_name}")
+                raise typer.Exit(1)
+        saved = await run_snapshot(repo_name=full_name, force=True)
+        async with SessionFactory() as session:
+            repo = await get_repository_by_name(session, full_name)
+            assert repo is not None
+            state = await tracking_state(session, repo)
+        if state.status.value == "failed":
+            console.print(f"[red]Refresh failed:[/red] {state.last_snapshot_error}")
+            raise typer.Exit(1)
+        console.print(f"[green]Refresh complete for {full_name} ({saved} snapshot saved).[/green]")
+
+    _run_async(_impl)
+
+
+@repos_app.command("list")
+def repos_list(
+    all_repositories: bool = typer.Option(False, "--all", help="Include untracked repositories."),
+    status: str | None = typer.Option(None, "--status"),
+    label: str | None = typer.Option(None, "--label"),
+    output: str = typer.Option("table", "--output", help="table or json"),
+) -> None:
+    if output not in {"table", "json"}:
+        console.print("[red]Error:[/red] --output must be table or json")
+        raise typer.Exit(2)
+    valid_statuses = {"healthy", "stale", "failed", "paused", "untracked"}
+    if status is not None and status not in valid_statuses:
+        console.print("[red]Error:[/red] unknown tracking status")
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        from db.base import SessionFactory
+        from db.repositories import list_repositories
+        from tracking.service import tracking_state
+
+        scope = "all" if all_repositories or status == "untracked" else "tracked"
+        async with SessionFactory() as session:
+            repos, _total = await list_repositories(
+                session,
+                tracking=scope,
+                label=label,
+                limit=10000,
+                sort="name",
+            )
+            rows: list[dict[str, object]] = []
+            for repo in repos:
+                state = await tracking_state(session, repo)
+                if status is not None and state.status.value != status:
+                    continue
+                rows.append(
+                    {
+                        "id": repo.id,
+                        "repository": repo.full_name,
+                        "status": state.status.value,
+                        "tracking_enabled": state.tracking_enabled,
+                        "tracking_paused": state.tracking_paused,
+                        "label": state.label,
+                        "snapshot_count": state.snapshot_count,
+                        "history_start_at": state.history_start_at.isoformat()
+                        if state.history_start_at
+                        else None,
+                        "last_successful_snapshot_at": state.last_successful_snapshot_at.isoformat()
+                        if state.last_successful_snapshot_at
+                        else None,
+                        "last_snapshot_attempt_at": state.last_snapshot_attempt_at.isoformat()
+                        if state.last_snapshot_attempt_at
+                        else None,
+                        "last_snapshot_error": state.last_snapshot_error,
+                        "next_snapshot_at": state.next_snapshot_at.isoformat()
+                        if state.next_snapshot_at
+                        else None,
+                    }
+                )
+        if output == "json":
+            typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+        else:
+            _render_tracking_table(rows, "Tracked repositories")
+
+    _run_async(_impl)
 
 
 def _render_repos_table(repos: list[RepoSummary], title: str) -> None:
@@ -240,6 +465,88 @@ def snapshot() -> None:
             console.print(
                 "[yellow]No tracked repositories yet. Try `radar top --save` first.[/yellow]"
             )
+
+    _run_async(_impl)
+
+
+@app.command()
+def backfill(
+    full_name: str | None = typer.Argument(None, metavar="owner/name"),
+    all_repositories: bool = typer.Option(
+        False, "--all", help="Backfill every active tracked repository."
+    ),
+    days: int = typer.Option(30, "--days", min=1, max=3650),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Plan work without writing snapshots."
+    ),
+    limit: int | None = typer.Option(
+        None, "--limit", min=0, help="Maximum missing days per repository."
+    ),
+    max_pages: int | None = typer.Option(
+        None, "--max-pages", min=1, help="Maximum GitHub stargazer pages."
+    ),
+    concurrency: int = typer.Option(
+        1, "--concurrency", min=1, help="Maximum concurrent repositories (safe default: 1)."
+    ),
+    output: str = typer.Option("table", "--output", help="table or json"),
+) -> None:
+    if (full_name is None) == (not all_repositories):
+        console.print("[red]Error:[/red] give owner/name or use --all")
+        raise typer.Exit(2)
+    if full_name is not None:
+        full_name = _require_full_name(full_name)
+    if output not in {"table", "json"}:
+        console.print("[red]Error:[/red] --output must be table or json")
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        from collector.backfill import run_backfill
+        from config import settings
+        from db.base import SessionFactory
+
+        async with SessionFactory() as session:
+            result = await run_backfill(
+                [full_name] if full_name else None,
+                days=days,
+                dry_run=dry_run,
+                limit=limit,
+                max_pages=(max_pages if max_pages is not None else settings.backfill_max_pages),
+                concurrency=concurrency,
+                session=session,
+            )
+        if output == "json":
+            typer.echo(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
+            if any(item.error for item in result.repositories):
+                raise typer.Exit(1)
+            return
+        title = "Backfill plan" if dry_run else "Backfill result"
+        rows = [item.as_dict() for item in result.repositories]
+        if rows:
+            _render_tracking_table(
+                [
+                    {
+                        "repository": item["repository"],
+                        "status": (
+                            "planned"
+                            if dry_run
+                            else ("failed" if item["error"] else "updated")
+                        ),
+                        "label": f"{item['inserted']}/{item['planned']} snapshots",
+                        "snapshot_count": item["skipped_existing"],
+                        "last_successful_snapshot_at": None,
+                        "last_snapshot_error": item["error"],
+                    }
+                    for item in rows
+                ],
+                title,
+            )
+        else:
+            console.print("[yellow]No active tracked repositories found.[/yellow]")
+        action = "Planned" if dry_run else "Inserted"
+        count = result.planned if dry_run else result.inserted
+        console.print(f"[green]{action} {count} snapshot(s).[/green]")
+        if any(item.error for item in result.repositories):
+            raise typer.Exit(1)
 
     _run_async(_impl)
 
@@ -442,6 +749,125 @@ _ALERT_TYPE_ALIASES = {
     "velocity": "velocity_above",
     "milestone": "stars_reached",
 }
+
+
+@app.command("export")
+def export_analytics(
+    target: str = typer.Argument(..., metavar="owner/name|leaderboard"),
+    format: str = typer.Option("json", "--format", help="json or csv"),
+    window: int = typer.Option(7, "--window", min=7, max=90),
+    output_file: str | None = typer.Option(
+        None, "--output", help="Write to a file instead of stdout."
+    ),
+) -> None:
+    if format not in {"json", "csv"}:
+        console.print("[red]Error:[/red] --format must be json or csv")
+        raise typer.Exit(2)
+    if target != "leaderboard":
+        target = _require_full_name(target)
+    if target == "leaderboard" and window not in {7, 30, 90}:
+        console.print("[red]Error:[/red] --window must be one of 7, 30 or 90")
+        raise typer.Exit(2)
+
+    async def _impl() -> None:
+        from analytics import service
+        from analytics.export import leaderboard_csv, repository_payload, series_csv
+        from config import settings
+        from db.base import SessionFactory
+        from db.repositories import get_repository_by_name
+        from tracking.service import tracking_state
+
+        if target == "leaderboard":
+            async with SessionFactory() as session:
+                _total, scored = await service.leaderboard(
+                    session, window_days=window, limit=100, offset=0
+                )
+            rows = []
+            for index, (repo, velocity, stars) in enumerate(scored, start=1):
+                owner, _, name = repo.full_name.partition("/")
+                rows.append(
+                    {
+                        "rank": index,
+                        "owner": owner,
+                        "name": name,
+                        "full_name": repo.full_name,
+                        "language": repo.language,
+                        "stars": stars,
+                        "stars_per_day": velocity.stars_per_day,
+                        "stars_gained": velocity.stars_gained,
+                    }
+                )
+            content = leaderboard_csv(rows) if format == "csv" else json.dumps(
+                {"format_version": "0.8", "window_days": window, "items": rows},
+                ensure_ascii=False,
+                indent=2,
+            )
+        else:
+            async with SessionFactory() as session:
+                repo = await get_repository_by_name(session, target)
+                if repo is None:
+                    console.print(f"[red]Repository not known:[/red] {target}")
+                    raise typer.Exit(1)
+                series = await service.repo_series(
+                    session, repo.id, history_days=max(window, 7)
+                )
+                velocities, trend, _stars = await service.repo_velocity(
+                    session,
+                    repo.id,
+                    windows=(7, 30, 90),
+                    history_days=max(window, 7),
+                )
+                bursts, _active = await service.repo_bursts(
+                    session,
+                    repo.id,
+                    history_days=max(window, 7),
+                    rolling_window=settings.analytics_rolling_window,
+                    z_threshold=settings.analytics_burst_z,
+                    min_delta=settings.analytics_burst_min_delta,
+                    min_duration=settings.analytics_burst_min_days,
+                )
+                state = await tracking_state(session, repo)
+            if format == "csv":
+                content = series_csv(series)
+            else:
+                state_payload = {
+                    "status": state.status.value,
+                    "tracking_enabled": state.tracking_enabled,
+                    "tracking_paused": state.tracking_paused,
+                    "label": state.label,
+                    "snapshot_count": state.snapshot_count,
+                    "history_start_at": state.history_start_at.isoformat()
+                    if state.history_start_at
+                    else None,
+                    "last_successful_snapshot_at": state.last_successful_snapshot_at.isoformat()
+                    if state.last_successful_snapshot_at
+                    else None,
+                    "last_snapshot_attempt_at": state.last_snapshot_attempt_at.isoformat()
+                    if state.last_snapshot_attempt_at
+                    else None,
+                    "last_snapshot_error": state.last_snapshot_error,
+                }
+                content = json.dumps(
+                    repository_payload(
+                        full_name=target,
+                        series=series,
+                        velocities=velocities,
+                        trend=trend,
+                        bursts=bursts,
+                        tracking=state_payload,
+                    ),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+        if output_file:
+            from pathlib import Path
+
+            Path(output_file).write_text(content + ("" if content.endswith("\n") else "\n"))
+            console.print(f"[green]Export written to {output_file}.[/green]")
+        else:
+            typer.echo(content, nl=not content.endswith("\n"))
+
+    _run_async(_impl)
 
 
 @alerts_app.command("add")
