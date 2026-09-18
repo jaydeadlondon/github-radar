@@ -569,3 +569,80 @@ def alerts_delete(
         console.print(f"[green]Deleted alert rule #{rule_id}.[/green]")
 
     _run_async(_impl)
+
+
+@alerts_app.command("events")
+def alerts_events(
+    unread: bool = typer.Option(False, "--unread", help="Show only unread events."),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, max=100),
+) -> None:
+    async def _impl() -> None:
+        from db.alerts import list_events
+        from db.base import SessionFactory
+
+        async with SessionFactory() as session:
+            events, _total = await list_events(
+                session,
+                acknowledged=False if unread else None,
+                limit=limit,
+            )
+        if not events:
+            console.print("[yellow]No alert events found.[/yellow]")
+            return
+
+        table = Table(title="Alert events")
+        table.add_column("ID", justify="right")
+        table.add_column("Created")
+        table.add_column("Repository")
+        table.add_column("Type")
+        table.add_column("Message")
+        table.add_column("Read")
+        for event in events:
+            table.add_row(
+                str(event.id),
+                event.created_at.strftime("%Y-%m-%d %H:%M"),
+                event.repository_full_name,
+                event.kind,
+                event.message,
+                "yes" if event.acknowledged_at else "no",
+            )
+        console.print(table)
+
+    _run_async(_impl)
+
+
+@alerts_app.command("acknowledge")
+def alerts_acknowledge(event_id: int = typer.Argument(..., min=1)) -> None:
+    async def _impl() -> None:
+        from db.alerts import get_event, set_event_acknowledged
+        from db.base import SessionFactory
+
+        async with SessionFactory() as session:
+            event = await get_event(session, event_id)
+            if event is None:
+                console.print(f"[red]Alert event not found:[/red] {event_id}")
+                raise typer.Exit(1)
+            await set_event_acknowledged(session, event, True)
+            await session.commit()
+        console.print(f"[green]Acknowledged alert event #{event_id}.[/green]")
+
+    _run_async(_impl)
+
+
+@alerts_app.command("acknowledge-all")
+def alerts_acknowledge_all(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+) -> None:
+    if not yes and not typer.confirm("Acknowledge all unread alert events?"):
+        raise typer.Abort()
+
+    async def _impl() -> None:
+        from db.alerts import acknowledge_all_events
+        from db.base import SessionFactory
+
+        async with SessionFactory() as session:
+            changed = await acknowledge_all_events(session)
+            await session.commit()
+        console.print(f"[green]Acknowledged {changed} alert event(s).[/green]")
+
+    _run_async(_impl)
