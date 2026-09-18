@@ -33,6 +33,10 @@ class Repository(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("full_name", name="uq_repositories_full_name"),
         Index("ix_repositories_language", "language"),
+        Index("ix_repositories_tracking_enabled", "tracking_enabled"),
+        Index("ix_repositories_tracking_paused", "tracking_paused"),
+        Index("ix_repositories_tracking_label", "tracking_label"),
+        Index("ix_repositories_last_snapshot_attempt", "last_snapshot_attempt_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -42,6 +46,26 @@ class Repository(TimestampMixin, Base):
     language: Mapped[str | None] = mapped_column(String(64))
     github_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     github_pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    default_branch: Mapped[str | None] = mapped_column(String(255))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # A row can remain known after tracking is removed.  Existing repositories
+    # are enabled by the migration so v0.7 keeps its historical behaviour.
+    tracking_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", nullable=False
+    )
+    tracking_paused: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    tracking_label: Mapped[str | None] = mapped_column(String(100))
+    last_successful_snapshot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_snapshot_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_snapshot_error: Mapped[str | None] = mapped_column(Text)
+    next_snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     snapshots: Mapped[list["RepoSnapshot"]] = relationship(
         back_populates="repository",
@@ -67,11 +91,16 @@ class RepoSnapshot(TimestampMixin, Base):
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+    quality_status: Mapped[str] = mapped_column(
+        String(24), default="accepted", server_default="accepted", nullable=False
+    )
+    quality_reason: Mapped[str | None] = mapped_column(String(128))
 
     repository: Mapped["Repository"] = relationship(back_populates="snapshots")
 
     __table_args__ = (
         Index("ix_repo_snapshots_repo_id_observed_at", "repo_id", "observed_at"),
+        Index("ix_repo_snapshots_quality_status", "quality_status"),
     )
 
 

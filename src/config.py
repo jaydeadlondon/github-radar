@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     scheduler_enabled: bool = False
     scheduler_interval_hours: int = 24
+    tracking_stale_after_hours: float | None = None
+    backfill_max_pages: int | None = None
 
     alerts_enabled: bool = True
     alert_webhook_url: str = ""
