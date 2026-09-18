@@ -109,25 +109,77 @@
             </button>
           </div>
         </div>
-        <div class="alerts-filters">
-          <div
-            class="seg"
-            id="alert-view"
-            role="group"
-            aria-label="Alert status"
-          >
-            <button class="active" data-view="unread">Unread</button>
-            <button data-view="all">All</button>
-          </div>
-          <select id="alert-kind-filter" aria-label="Filter alerts by type">
-            <option value="">All alert types</option>
-            <option value="burst_started">Bursts</option>
-            <option value="velocity_above">Velocity</option>
-            <option value="stars_reached">Milestones</option>
-          </select>
+        <div
+          class="seg alert-section-tabs"
+          id="alert-section"
+          role="group"
+          aria-label="Alert section"
+        >
+          <button class="active" data-section="inbox">Inbox</button>
+          <button data-section="rules">Rules</button>
         </div>
-        <div id="alert-events" class="alert-events">
-          <div class="empty">Loading alerts…</div>
+        <div id="alert-inbox-pane">
+          <div class="alerts-filters">
+            <div
+              class="seg"
+              id="alert-view"
+              role="group"
+              aria-label="Alert status"
+            >
+              <button class="active" data-view="unread">Unread</button>
+              <button data-view="all">All</button>
+            </div>
+            <select id="alert-kind-filter" aria-label="Filter alerts by type">
+              <option value="">All alert types</option>
+              <option value="burst_started">Bursts</option>
+              <option value="velocity_above">Velocity</option>
+              <option value="stars_reached">Milestones</option>
+            </select>
+          </div>
+          <div id="alert-events" class="alert-events">
+            <div class="empty">Loading alerts…</div>
+          </div>
+        </div>
+        <div id="alert-rules-pane" hidden>
+          <form id="alert-rule-form" class="alert-rule-form">
+            <label>
+              Repository
+              <select id="alert-rule-repository" required>
+                <option value="">Select a tracked repository</option>
+              </select>
+            </label>
+            <label>
+              Alert type
+              <select id="alert-rule-kind" required>
+                <option value="burst_started">New burst</option>
+                <option value="velocity_above">Velocity threshold</option>
+                <option value="stars_reached">Star milestone</option>
+              </select>
+            </label>
+            <label id="alert-threshold-field" hidden>
+              Threshold
+              <input
+                id="alert-rule-threshold"
+                type="number"
+                min="0.01"
+                step="0.01"
+              />
+            </label>
+            <label id="alert-window-field" hidden>
+              Window
+              <select id="alert-rule-window">
+                <option value="7">7 days</option>
+                <option value="30">30 days</option>
+                <option value="90">90 days</option>
+              </select>
+            </label>
+            <button id="alert-rule-submit" class="btn" type="submit">
+              Create rule
+            </button>
+          </form>
+          <div id="alert-rules" class="alert-rules">
+            <div class="empty">Loading rules…</div>
+          </div>
         </div>
       </section>
       <section class="grid">
