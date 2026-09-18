@@ -1,4 +1,4 @@
-/* GitHub Radar dashboard — ECharts helpers (v0.6). */
+/* GitHub Radar dashboard — ECharts helpers (v0.7). */
 /* Global state shared with app.js (defined in app.js). */
 /* eslint-disable no-undef */
 const chart = echarts.init(document.getElementById("chart"));
