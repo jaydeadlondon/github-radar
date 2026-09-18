@@ -120,12 +120,35 @@ async def test_repeated_burst_history_only_adds_new_start_dates(db_session) -> N
     rule = await _create(db_session, RuleSpec(kind=BURST_STARTED))
     first = _burst(date(2026, 9, 15))
     second = _burst(date(2026, 9, 16))
+    evaluated_at = datetime(2026, 9, 16, tzinfo=UTC)
 
-    assert len(await evaluate_burst_rule(db_session, rule, [first])) == 1
-    assert len(await evaluate_burst_rule(db_session, rule, [first, second])) == 1
+    initial = await evaluate_burst_rule(
+        db_session, rule, [first], evaluated_at=evaluated_at
+    )
+    repeated = await evaluate_burst_rule(
+        db_session, rule, [first, second], evaluated_at=evaluated_at
+    )
+    assert len(initial) == 1
+    assert len(repeated) == 1
     await db_session.commit()
 
     assert (await list_events(db_session))[1] == 2
+
+
+async def test_new_burst_rule_does_not_replay_old_history(db_session) -> None:
+    rule = await _create(db_session, RuleSpec(kind=BURST_STARTED))
+    events = [_burst(date(2026, 8, 1)), _burst(date(2026, 9, 15))]
+
+    inserted = await evaluate_burst_rule(
+        db_session,
+        rule,
+        events,
+        evaluated_at=datetime(2026, 9, 16, tzinfo=UTC),
+    )
+    await db_session.commit()
+
+    assert [event.fingerprint for event in inserted] == ["burst:2026-09-15"]
+    assert (await list_events(db_session))[1] == 1
 
 
 async def test_disabled_milestone_does_not_reserve_its_fingerprint(db_session) -> None:

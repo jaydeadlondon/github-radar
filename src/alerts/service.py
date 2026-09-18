@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,12 +53,20 @@ async def evaluate_burst_rule(
     if rule.kind != BURST_STARTED:
         raise ValueError("expected a burst_started rule")
 
-    rule.last_evaluated_at = _evaluation_time(evaluated_at)
+    now = _evaluation_time(evaluated_at)
+    previous_evaluation = rule.last_evaluated_at
+    rule.last_evaluated_at = now
     if not rule.enabled:
         return []
 
+    cutoff_day = (
+        previous_evaluation.date()
+        if previous_evaluation is not None
+        else now.date() - timedelta(days=2)
+    )
+    recent_events = [event for event in events if event.end_day >= cutoff_day]
     inserted: list[AlertEvent] = []
-    for candidate in burst_candidates(rule.repository.full_name, events):
+    for candidate in burst_candidates(rule.repository.full_name, recent_events):
         event = await create_event(session, rule, candidate)
         if event is not None:
             inserted.append(event)
