@@ -23,6 +23,11 @@ class SnapshotOut(BaseModel):
     observed_at: datetime
 
 
+class SnapshotQualityOut(SnapshotOut):
+    quality_status: Literal["accepted", "anomalous", "rejected"]
+    quality_reason: str | None = None
+
+
 class RepoOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -34,6 +39,16 @@ class RepoOut(BaseModel):
     stargazers_count: int = 0
     forks_count: int = 0
     stars_per_day: float | None = None
+    tracking_enabled: bool = True
+    tracking_paused: bool = False
+    tracking_label: str | None = None
+    tracking_status: str = "healthy"
+    last_successful_snapshot_at: datetime | None = None
+    last_snapshot_attempt_at: datetime | None = None
+    last_snapshot_error: str | None = None
+    snapshot_count: int = 0
+    history_start_at: datetime | None = None
+    next_snapshot_at: datetime | None = None
 
 
 class TrendOut(RepoOut):
@@ -48,6 +63,42 @@ class VelocityOut(BaseModel):
     end_day: date
 
 
+TrackingStatusValue = Literal["healthy", "stale", "failed", "paused", "untracked"]
+
+
+class TrackingStatusOut(BaseModel):
+    id: int
+    repository: str
+    tracking_enabled: bool
+    tracking_paused: bool
+    label: str | None = None
+    tracking_label: str | None = None
+    status: TrackingStatusValue
+    tracking_status: TrackingStatusValue | None = None
+    last_successful_snapshot_at: datetime | None = None
+    last_snapshot_attempt_at: datetime | None = None
+    last_snapshot_error: str | None = None
+    snapshot_count: int
+    history_start_at: datetime | None = None
+    next_snapshot_at: datetime | None = None
+    archived_at: datetime | None = None
+    default_branch: str | None = None
+
+
+class TrackingUpdate(BaseModel):
+    enabled: bool | None = None
+    paused: bool | None = None
+    label: str | None = Field(default=None, max_length=100)
+    tracking_enabled: bool | None = None
+    tracking_paused: bool | None = None
+    tracking_label: str | None = Field(default=None, max_length=100)
+
+
+class TrackingTrackIn(BaseModel):
+    label: str | None = Field(default=None, max_length=100)
+    tracking_label: str | None = Field(default=None, max_length=100)
+
+
 class RepoDetailOut(BaseModel):
     id: int
     full_name: str
@@ -59,6 +110,11 @@ class RepoDetailOut(BaseModel):
     latest_snapshot: SnapshotOut | None = None
     velocities: list[VelocityOut] = []
     active_burst: bool = False
+    tracking: TrackingStatusOut | None = None
+    tracking_enabled: bool = True
+    tracking_paused: bool = False
+    tracking_label: str | None = None
+    tracking_status: TrackingStatusValue = "healthy"
 
 
 class ErrorOut(BaseModel):
