@@ -70,17 +70,42 @@ class GitHubClient:
         payload = await self._request("GET", f"/repos/{full_name}")
         return RepoSummary.model_validate(payload)
 
+    async def get_stargazer_dates(
+        self,
+        full_name: str,
+        *,
+        max_pages: int | None = None,
+    ) -> list[str]:
+        dates: list[str] = []
+        async for item in self.paginate(
+            f"/repos/{full_name}/stargazers",
+            params={"per_page": 100},
+            headers={"Accept": "application/vnd.github.star+json"},
+            max_pages=max_pages,
+        ):
+            starred_at = item.get("starred_at")
+            if isinstance(starred_at, str) and starred_at:
+                dates.append(starred_at)
+        return dates
+
     async def paginate(
         self,
         path: str,
         params: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+        max_pages: int | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         params = dict(params or {})
         per_page = int(params.get("per_page", 100))
         page = 1
         while True:
+            if max_pages is not None and page > max_pages:
+                break
             page_params = {**params, "page": page, "per_page": per_page}
-            payload = await self._request("GET", path, params=page_params)
+            payload = await self._request(
+                "GET", path, params=page_params, headers=headers
+            )
             if isinstance(payload, dict) and "items" in payload:
                 items = payload["items"]
             elif isinstance(payload, list):
@@ -98,9 +123,10 @@ class GitHubClient:
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         cache_key = f"{method} {path} {self._sorted_params(kwargs.get('params'))}"
         cached = self._etag_cache.get(cache_key)
+        extra_headers = kwargs.pop("headers", None) or {}
 
         for attempt in range(settings.max_retries + 1):
-            headers = dict(self._headers)
+            headers = {**self._headers, **extra_headers}
             if cached is not None:
                 headers["If-None-Match"] = cached[0]
 
