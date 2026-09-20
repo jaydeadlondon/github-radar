@@ -26,6 +26,6 @@ async def get_repo_or_404(
         raise HTTPException(
             status_code=404,
             detail=f"Repository not tracked: {full_name}. "
-            "Run `radar top --save` or `radar search --save` to track it.",
+            "Run `radar repos add` or `radar top --save` to track it.",
         )
     return repo
