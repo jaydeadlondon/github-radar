@@ -81,6 +81,25 @@
         <select id="language-filter" aria-label="Filter by language">
           <option value="">All languages</option>
         </select>
+        <select
+          id="tracking-status-filter"
+          aria-label="Filter by tracking status"
+        >
+          <option value="tracked">Tracked repositories</option>
+          <option value="all">All known repositories</option>
+          <option value="healthy">Healthy</option>
+          <option value="stale">Stale</option>
+          <option value="failed">Failed</option>
+          <option value="paused">Paused</option>
+          <option value="untracked">Untracked</option>
+        </select>
+        <input
+          id="tracking-label-filter"
+          type="search"
+          placeholder="Filter by label…"
+          aria-label="Filter by tracking label"
+          autocomplete="off"
+        />
         <select id="period-select" aria-label="Chart period">
           <option value="7">Last 7 days</option>
           <option value="30" selected>Last 30 days</option>
@@ -88,6 +107,27 @@
           <option value="all">All time</option>
         </select>
         <button id="refresh-btn" class="btn">Refresh</button>
+        <div
+          class="track-controls"
+          role="group"
+          aria-label="Track a repository"
+        >
+          <input
+            id="track-repository"
+            type="text"
+            placeholder="owner/name"
+            aria-label="Repository to track"
+            autocomplete="off"
+          />
+          <input
+            id="track-label"
+            type="text"
+            placeholder="Label (optional)"
+            aria-label="Label for tracked repository"
+            autocomplete="off"
+          />
+          <button id="track-btn" class="btn">Track repository</button>
+        </div>
       </section>
       <section class="card alerts-panel" id="alerts-panel" hidden>
         <div class="alerts-head">
