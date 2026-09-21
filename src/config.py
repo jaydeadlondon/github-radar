@@ -1,6 +1,10 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class ConfigurationError(ValueError):
+    """Raised when a runtime configuration is unsafe or incomplete."""
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -51,6 +55,36 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     log_level: str = "INFO"
     log_format: str = "text"
+
+
+def configuration_warnings(config: Settings | None = None) -> list[str]:
+    active = config or settings
+    warnings: list[str] = []
+    if not active.api_auth_enabled:
+        warnings.append("API authentication is disabled")
+    if not active.api_key:
+        warnings.append("read API key is not configured")
+    if not active.admin_api_key:
+        warnings.append("admin API key is not configured")
+    if "*" in active.cors_origins:
+        warnings.append("CORS allows every origin")
+    if active.log_format.lower() not in {"text", "json"}:
+        warnings.append("log format must be text or json")
+    if active.webhook_max_attempts < 1:
+        warnings.append("webhook max attempts must be at least 1")
+    if active.environment.lower() in {"production", "prod"} and not active.github_token:
+        warnings.append("GitHub token is not configured")
+    return warnings
+
+
+def validate_runtime_configuration(config: Settings | None = None) -> None:
+    active = config or settings
+    if active.environment.lower() not in {"production", "prod"}:
+        return
+
+    problems = configuration_warnings(active)
+    if problems:
+        raise ConfigurationError("; ".join(problems))
 
 
 settings = Settings()
