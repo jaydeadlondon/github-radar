@@ -149,6 +149,23 @@ class ConfigDiagnosticsOut(BaseModel):
     insecure_warnings: list[str]
 
 
+JobStatusValue = Literal["running", "succeeded", "failed", "skipped"]
+
+
+class SnapshotJobOut(BaseModel):
+    id: str
+    job_type: str
+    status: JobStatusValue
+    started_at: datetime
+    finished_at: datetime | None
+    total_repositories: int
+    succeeded_repositories: int
+    failed_repositories: int
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class SlopeOut(BaseModel):
     slope: float
     intercept: float

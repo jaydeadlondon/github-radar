@@ -17,6 +17,7 @@ from api.routes import (
     analytics,
     health,
     history,
+    jobs,
     languages,
     operations,
     repos,
@@ -97,6 +98,7 @@ def create_app() -> FastAPI:
     app.include_router(analytics.router, prefix=settings.api_prefix)
     app.include_router(alerts.router, prefix=settings.api_prefix)
     app.include_router(operations.router, prefix=settings.api_prefix)
+    app.include_router(jobs.router, prefix=settings.api_prefix)
     app.include_router(health.router)
 
     app.mount(
