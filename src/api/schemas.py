@@ -294,5 +294,56 @@ class AlertSummaryOut(BaseModel):
     last_event_at: datetime | None
 
 
+NotificationProvider = Literal["generic", "slack", "discord"]
+
+
+class NotificationEndpointCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$")
+    provider: NotificationProvider = "generic"
+    url: str = Field(min_length=8, max_length=1000)
+    signing_secret: str | None = Field(default=None, min_length=1, max_length=500)
+    enabled: bool = True
+
+
+class NotificationEndpointUpdate(BaseModel):
+    provider: NotificationProvider | None = None
+    url: str | None = Field(default=None, min_length=8, max_length=1000)
+    signing_secret: str | None = Field(default=None, min_length=1, max_length=500)
+    enabled: bool | None = None
+
+
+class NotificationEndpointOut(BaseModel):
+    id: int
+    name: str
+    provider: NotificationProvider
+    url_configured: bool
+    enabled: bool
+    failure_count: int
+    disabled_at: datetime | None
+    last_delivery_at: datetime | None
+    last_error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AlertDeliveryOut(BaseModel):
+    id: int
+    event_id: int
+    endpoint_id: int | None
+    attempt: int
+    status: Literal["pending", "sent", "failed"]
+    response_status: int | None
+    error: str | None
+    attempted_at: datetime
+    delivered_at: datetime | None
+    next_attempt_at: datetime | None
+    created_at: datetime
+
+
+class DeliveryTestOut(BaseModel):
+    sent: bool
+    error: str | None = None
+
+
 class AcknowledgeAllOut(BaseModel):
     acknowledged: int
