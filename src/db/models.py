@@ -103,6 +103,35 @@ class RepoSnapshot(TimestampMixin, Base):
     )
 
 
+class JobLock(Base):
+    __tablename__ = "job_locks"
+
+    name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_job_locks_expires_at", "expires_at"),)
+
+
+class SnapshotJob(TimestampMixin, Base):
+    __tablename__ = "snapshot_jobs"
+    __table_args__ = (
+        Index("ix_snapshot_jobs_status_started", "status", "started_at"),
+        Index("ix_snapshot_jobs_job_type_started", "job_type", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    total_repositories: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    succeeded_repositories: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_repositories: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class AlertRule(TimestampMixin, Base):
     __tablename__ = "alert_rules"
     __table_args__ = (Index("ix_alert_rules_repo_id_enabled", "repo_id", "enabled"),)
