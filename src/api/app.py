@@ -113,6 +113,9 @@ async def request_logging(request: Request, call_next):
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
     response.headers["X-Request-ID"] = request_id
+    if request.url.path.startswith(settings.api_prefix):
+        response.headers["X-API-Version"] = "v1"
+        response.headers["X-API-Compatibility"] = "stable"
     logger.info(
         "%s %s -> %s (%.1f ms) [%s]",
         request.method,
