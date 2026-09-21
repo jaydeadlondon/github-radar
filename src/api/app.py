@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
+    app.add_exception_handler(RequestValidationError, _validation_exception_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)
     app.include_router(history.router, prefix=settings.api_prefix)
     app.include_router(repos.router, prefix=settings.api_prefix)
@@ -136,6 +138,24 @@ async def _http_exception_handler(
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorOut(detail=detail, code=exc.status_code).model_dump(),
+    )
+
+
+async def _validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    logger.info(
+        "request validation failed",
+        extra={
+            "request_id": request.headers.get("X-Request-ID"),
+            "operation": f"{request.method} {request.url.path}",
+            "result": 422,
+            "error_category": "request_validation",
+        },
+    )
+    return JSONResponse(
+        status_code=422,
+        content=ErrorOut(detail="Request validation failed", code=422).model_dump(),
     )
 
 
