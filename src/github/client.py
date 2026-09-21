@@ -154,6 +154,19 @@ class GitHubClient:
 
             if response.status_code in (403, 429):
                 retry_after = response.headers.get("Retry-After")
+                remaining = response.headers.get("X-RateLimit-Remaining")
+                message = response.text[:200]
+                rate_limited = response.status_code == 429 or bool(
+                    retry_after
+                    or remaining == "0"
+                    or "rate limit" in message.lower()
+                    or "secondary rate" in message.lower()
+                )
+                if not rate_limited:
+                    raise ApiError(
+                        f"GitHub API error {response.status_code}: {message}",
+                        response.status_code,
+                    )
                 if retry_after and retry_after.isdigit():
                     await asyncio.sleep(float(retry_after))
                     continue

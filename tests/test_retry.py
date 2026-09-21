@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from config import settings
-from github.errors import RateLimitError
+from github.errors import ApiError, RateLimitError
 
 
 def test_retry_on_429_then_success(client_factory):
@@ -32,6 +32,29 @@ def test_rate_limit_exhausted_raises(client_factory, monkeypatch):
     client = client_factory(handler)
     with pytest.raises(RateLimitError):
         asyncio.run(client.search_repos("stars:>1"))
+
+
+def test_forbidden_response_with_remaining_budget_does_not_sleep(
+    client_factory,
+):
+    calls = {"count": 0}
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return httpx.Response(
+            403,
+            headers={
+                "X-RateLimit-Remaining": "5848",
+                "X-RateLimit-Reset": "4102444800",
+            },
+            json={"message": "Resource not accessible by integration"},
+        )
+
+    client = client_factory(handler)
+    with pytest.raises(ApiError, match="Resource not accessible"):
+        asyncio.run(client.search_repos("stars:>1"))
+
+    assert calls["count"] == 1
 
 
 def test_etag_cache_returns_cached_payload(client_factory):
