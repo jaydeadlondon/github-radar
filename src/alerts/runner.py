@@ -20,7 +20,9 @@ from config import settings
 from db.alerts import list_enabled_rules
 from db.base import SessionFactory
 from db.models import AlertEvent, AlertRule
+from db.notifications import list_enabled_endpoints
 from db.repositories import get_latest_snapshot
+from observability import metrics
 
 
 async def evaluate_rules(
@@ -103,15 +105,42 @@ async def evaluate_rules(
                     )
                 )
 
-    destination = settings.alert_webhook_url if webhook_url is None else webhook_url
     for event in inserted:
-        await deliver_event(
-            session,
-            event,
-            webhook_url=destination,
-            timeout_seconds=settings.alert_webhook_timeout_seconds,
-            transport=transport,
-        )
+        metrics.increment("alert_events", labels={"kind": event.kind})
+
+    if webhook_url is None:
+        endpoints = await list_enabled_endpoints(session)
+    else:
+        endpoints = []
+    destination = settings.alert_webhook_url if webhook_url is None else webhook_url
+    delivery_attempts = settings.webhook_max_attempts if webhook_url is None else 1
+    for event in inserted:
+        if endpoints:
+            for endpoint in endpoints:
+                await deliver_event(
+                    session,
+                    event,
+                    webhook_url=endpoint.url,
+                    timeout_seconds=settings.alert_webhook_timeout_seconds,
+                    transport=transport,
+                    max_attempts=delivery_attempts,
+                    backoff_base_seconds=settings.webhook_backoff_base_seconds,
+                    signing_secret=endpoint.signing_secret or settings.webhook_signing_secret,
+                    provider=endpoint.provider,
+                    endpoint=endpoint,
+                )
+        else:
+            await deliver_event(
+                session,
+                event,
+                webhook_url=destination,
+                timeout_seconds=settings.alert_webhook_timeout_seconds,
+                transport=transport,
+                max_attempts=delivery_attempts,
+                backoff_base_seconds=settings.webhook_backoff_base_seconds,
+                signing_secret=settings.webhook_signing_secret,
+                provider=settings.webhook_provider,
+            )
     return inserted
 
 
