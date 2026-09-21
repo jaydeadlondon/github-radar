@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from config import ConfigurationError
 from github.client import GitHubClient
 from github.errors import GitHubError
 from github.models import RepoSummary
@@ -37,7 +38,7 @@ def _run_async(fn: Callable[[], Awaitable[None]]) -> None:
     async def _wrapper() -> None:
         try:
             await fn()
-        except (GitHubError, TrackingError) as exc:
+        except (ConfigurationError, GitHubError, TrackingError) as exc:
             console.print(f"[red]Error:[/red] {exc}")
             raise typer.Exit(1) from exc
 
@@ -106,8 +107,18 @@ def serve(
         import uvicorn
 
         from api.app import create_app
-        from config import settings
+        from config import settings, validate_runtime_configuration
+        from logging_config import configure_logging
 
+        try:
+            validate_runtime_configuration()
+        except ConfigurationError as exc:
+            console.print(f"[red]Unsafe production configuration:[/red] {exc}")
+            raise typer.Exit(2) from exc
+        configure_logging(
+            level=settings.log_level,
+            json_logs=settings.log_format.lower() == "json",
+        )
         if with_scheduler:
             settings.scheduler_enabled = True
 

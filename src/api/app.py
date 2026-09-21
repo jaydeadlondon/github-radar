@@ -14,7 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.routes import alerts, analytics, health, history, languages, repos, trends
 from api.schemas import ErrorOut
-from config import settings
+from config import settings, validate_runtime_configuration
 from db.base import engine
 from version import __version__
 
@@ -40,6 +40,7 @@ class DashboardStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    validate_runtime_configuration()
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
 
