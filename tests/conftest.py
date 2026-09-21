@@ -43,17 +43,21 @@ async def _clean_tables():
 
     from db.base import SessionFactory
     from db.models import (
+        AlertDelivery,
         AlertEvent,
         AlertRule,
         JobLock,
+        NotificationEndpoint,
         Repository,
         RepoSnapshot,
         SnapshotJob,
     )
 
     async with SessionFactory() as session:
+        await session.execute(delete(AlertDelivery))
         await session.execute(delete(AlertEvent))
         await session.execute(delete(AlertRule))
+        await session.execute(delete(NotificationEndpoint))
         await session.execute(delete(SnapshotJob))
         await session.execute(delete(JobLock))
         await session.execute(delete(RepoSnapshot))
