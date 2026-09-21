@@ -3,11 +3,15 @@ from pydantic import BaseModel
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_session
+from api.deps import get_session, require_read_api_key
 from db.models import Repository, RepoSnapshot
 from db.repositories import ACCEPTED_QUALITY_STATUSES
 
-router = APIRouter(prefix="/languages", tags=["languages"])
+router = APIRouter(
+    prefix="/languages",
+    tags=["languages"],
+    dependencies=[Depends(require_read_api_key)],
+)
 
 
 class LanguageOut(BaseModel):

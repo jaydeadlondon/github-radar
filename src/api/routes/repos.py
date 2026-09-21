@@ -6,7 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analytics import service
-from api.deps import get_repo_or_404, get_session
+from api.deps import (
+    get_repo_or_404,
+    get_session,
+    require_admin_api_key,
+    require_read_api_key,
+)
 from api.schemas import (
     Paginated,
     RepoDetailOut,
@@ -29,7 +34,11 @@ from github.errors import GitHubError, NotFoundError
 from tracking.service import pause, resume, set_label, track, tracking_state, untrack
 from tracking.types import TrackingState, as_utc
 
-router = APIRouter(prefix="/repos", tags=["repos"])
+router = APIRouter(
+    prefix="/repos",
+    tags=["repos"],
+    dependencies=[Depends(require_read_api_key)],
+)
 TrackingFilter = Literal["tracked", "active", "paused", "untracked", "all"]
 TrackingStatusFilter = Literal["healthy", "stale", "failed", "paused", "untracked"]
 
@@ -158,6 +167,7 @@ async def list_repos(
     response_model=TrackingStatusOut,
     status_code=status.HTTP_200_OK,
     summary="Start tracking a repository",
+    dependencies=[Depends(require_admin_api_key)],
 )
 async def track_repo(
     owner: str,
@@ -193,6 +203,7 @@ async def track_repo(
     "/{owner}/{name}/track",
     response_model=TrackingStatusOut,
     summary="Stop tracking without deleting history",
+    dependencies=[Depends(require_admin_api_key)],
 )
 async def untrack_repo(
     owner: str,
@@ -209,6 +220,7 @@ async def untrack_repo(
     "/{owner}/{name}/tracking",
     response_model=TrackingStatusOut,
     summary="Update tracking state and label",
+    dependencies=[Depends(require_admin_api_key)],
 )
 async def patch_tracking(
     owner: str,
@@ -257,6 +269,7 @@ async def get_tracking_status(
     "/{owner}/{name}/refresh",
     response_model=TrackingStatusOut,
     summary="Collect a repository snapshot now",
+    dependencies=[Depends(require_admin_api_key)],
 )
 async def refresh_repo(
     owner: str,
