@@ -84,11 +84,7 @@ def validate_runtime_configuration(config: Settings | None = None) -> None:
     if active.environment.lower() not in {"production", "prod"}:
         return
 
-    problems = [
-        warning
-        for warning in configuration_warnings(active)
-        if warning != "GitHub token is not configured"
-    ]
+    problems = configuration_warnings(active)
     if problems:
         raise ConfigurationError("; ".join(problems))
 
