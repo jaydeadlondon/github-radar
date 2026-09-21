@@ -62,6 +62,21 @@ def init_db() -> None:
 
 
 @app.command()
+def worker(
+    once: bool = typer.Option(
+        False,
+        "--once",
+        help="Run one snapshot job and exit instead of starting the scheduler.",
+    ),
+) -> None:
+    """Run scheduled snapshots outside the API process."""
+
+    from collector.worker import run_worker
+
+    _run_async(lambda: run_worker(once=once))
+
+
+@app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
     port: int = typer.Option(8000, "--port", help="Bind port."),
