@@ -2,6 +2,75 @@
 
 All notable changes to this project.
 
+## [0.9.0] — 2026-09-21
+
+### Added
+
+- Dockerfile and Docker Compose production baseline with migration, API and
+  independent worker services, healthcheck and persistent SQLite volume
+- `radar worker`, durable snapshot jobs, graceful shutdown, retry/backoff,
+  global database lease and per-repository overlap protection
+- Notification endpoint management API and CLI, durable delivery attempt history,
+  generic/Slack/Discord-compatible payloads, HMAC signatures, test delivery,
+  retries and automatic disablement after repeated failures
+- Scoped `X-API-Key` authentication with read/admin behavior, production
+  configuration diagnostics and safe secret redaction
+- `/ready`, `/metrics`, job status, GitHub quota/operations endpoints and
+  structured text/JSON logging with request/job/repository correlation fields
+- OpenAPI contract validation, API version headers, migration upgrade coverage
+  from the v0.7 schema and documented backup/restore/troubleshooting procedures
+
+### Changed
+
+- Package version and GitHub client user agent are now 0.9
+- The API no longer starts the scheduler by default; the worker owns scheduled
+  collection in deployment mode
+- Webhook delivery state is durable and observable without exposing configured
+  URLs or signing material
+
+### Fixed
+
+- Snapshot and GitHub transient failures preserve repository state and are
+  represented in job/delivery history instead of being silently discarded
+
+## [0.8.0] — 2026-09-18
+
+### Added
+
+- Managed repository tracking with explicit `repos add|remove|list|pause|resume|refresh`
+  commands and idempotent track/untrack/pause/resume domain operations
+- Additive migration `0004` with tracking controls, labels, archived/default-branch
+  metadata, snapshot attempt/success/error timestamps and next-run information
+- Collection-health states (`healthy`, `stale`, `failed`, `paused`, `untracked`),
+  snapshot counts and history-start metadata in the REST API and dashboard
+- Tracking REST API for `/track`, `/tracking`, `/status` and manual `/refresh`,
+  including label/status filters on repository listing
+- Snapshot data-quality layer: UTC normalization, same-timestamp deduplication,
+  rejected invalid/decreasing observations, explicit anomaly reasons and safe
+  failure recording without zero-valued snapshots
+- Resumable CLI backfill from GitHub stargazer timestamps with dry-run, page and
+  missing-point limits; paused/untracked repositories are skipped by default
+- Stable JSON and CSV analytics exports from the CLI and series/leaderboard API
+  endpoints
+- Dashboard tracking controls, label/status filters, health badges, last-error
+  visibility, manual refresh and an insufficient-history state
+- Migration, tracking, data-quality, pipeline, backfill, export, API, CLI and
+  dashboard regression coverage
+
+### Changed
+
+- Package and GitHub client user-agent versions are now 0.8
+- Snapshot collection commits attempt state and each repository result independently;
+  paused and untracked repositories are not scheduled
+- Existing v0.7 repositories remain tracked on upgrade and existing snapshots are
+  treated as accepted observations; no history is deleted
+
+### Fixed
+
+- GitHub failures no longer look like a zero star delta
+- Analytics and leaderboard queries ignore rejected quality records while retaining
+  them for audit
+
 ## [0.7.0] — 2026-09-18
 
 ### Added
