@@ -27,6 +27,7 @@ from api.routes import (
 from api.schemas import ErrorOut
 from config import settings, validate_runtime_configuration
 from db.base import engine
+from observability import metrics
 from version import __version__
 
 logger = logging.getLogger(__name__)
@@ -118,13 +119,23 @@ async def request_logging(request: Request, call_next):
     if request.url.path.startswith(settings.api_prefix):
         response.headers["X-API-Version"] = "v1"
         response.headers["X-API-Compatibility"] = "stable"
+    metrics.increment(
+        "http_requests",
+        labels={"method": request.method, "status": response.status_code},
+    )
+    metrics.observe(
+        "http_request_duration_seconds",
+        duration_ms / 1000,
+        labels={"method": request.method, "path": request.url.path},
+    )
     logger.info(
-        "%s %s -> %s (%.1f ms) [%s]",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-        request_id,
+        "http request",
+        extra={
+            "request_id": request_id,
+            "operation": f"{request.method} {request.url.path}",
+            "duration_ms": round(duration_ms, 2),
+            "result": response.status_code,
+        },
     )
     return response
 
