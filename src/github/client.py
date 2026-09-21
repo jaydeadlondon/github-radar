@@ -71,6 +71,18 @@ class GitHubClient:
         payload = await self._request("GET", f"/repos/{full_name}")
         return RepoSummary.model_validate(payload)
 
+    async def get_rate_limit(self) -> dict[str, int | str]:
+        payload = await self._request("GET", "/rate_limit")
+        resources = payload.get("resources", {}) if isinstance(payload, dict) else {}
+        core = resources.get("core", {}) if isinstance(resources, dict) else {}
+        return {
+            "resource": "core",
+            "limit": int(core.get("limit", 0)),
+            "remaining": int(core.get("remaining", 0)),
+            "used": int(core.get("used", 0)),
+            "reset": int(core.get("reset", 0)),
+        }
+
     async def get_stargazer_dates(
         self,
         full_name: str,

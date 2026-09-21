@@ -122,6 +122,33 @@ class ErrorOut(BaseModel):
     code: int
 
 
+class RateLimitOut(BaseModel):
+    resource: str
+    limit: int
+    remaining: int
+    used: int
+    reset_at: datetime | None = None
+    warning: str | None = None
+
+
+class ReadyOut(BaseModel):
+    status: Literal["ready", "not_ready"]
+    database: str
+    migrations: str
+    detail: str | None = None
+
+
+class ConfigDiagnosticsOut(BaseModel):
+    environment: str
+    api_auth_enabled: bool
+    admin_key_configured: bool
+    read_key_configured: bool
+    database_backend: str
+    scheduler_enabled: bool
+    webhook_provider: str
+    insecure_warnings: list[str]
+
+
 class SlopeOut(BaseModel):
     slope: float
     intercept: float
