@@ -6,16 +6,28 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from api.routes import alerts, analytics, health, history, languages, repos, trends
+from api.routes import (
+    alerts,
+    analytics,
+    health,
+    history,
+    jobs,
+    languages,
+    operations,
+    repos,
+    trends,
+)
 from api.schemas import ErrorOut
-from config import settings
+from config import settings, validate_runtime_configuration
 from db.base import engine
+from observability import metrics
 from version import __version__
 
 logger = logging.getLogger(__name__)
@@ -40,6 +52,7 @@ class DashboardStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    validate_runtime_configuration()
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
 
@@ -79,6 +92,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
+    app.add_exception_handler(RequestValidationError, _validation_exception_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)
     app.include_router(history.router, prefix=settings.api_prefix)
     app.include_router(repos.router, prefix=settings.api_prefix)
@@ -86,6 +100,8 @@ def create_app() -> FastAPI:
     app.include_router(languages.router, prefix=settings.api_prefix)
     app.include_router(analytics.router, prefix=settings.api_prefix)
     app.include_router(alerts.router, prefix=settings.api_prefix)
+    app.include_router(operations.router, prefix=settings.api_prefix)
+    app.include_router(jobs.router, prefix=settings.api_prefix)
     app.include_router(health.router)
 
     app.mount(
@@ -100,13 +116,26 @@ async def request_logging(request: Request, call_next):
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
     response.headers["X-Request-ID"] = request_id
+    if request.url.path.startswith(settings.api_prefix):
+        response.headers["X-API-Version"] = "v1"
+        response.headers["X-API-Compatibility"] = "stable"
+    metrics.increment(
+        "http_requests",
+        labels={"method": request.method, "status": response.status_code},
+    )
+    metrics.observe(
+        "http_request_duration_seconds",
+        duration_ms / 1000,
+        labels={"method": request.method, "path": request.url.path},
+    )
     logger.info(
-        "%s %s -> %s (%.1f ms) [%s]",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-        request_id,
+        "http request",
+        extra={
+            "request_id": request_id,
+            "operation": f"{request.method} {request.url.path}",
+            "duration_ms": round(duration_ms, 2),
+            "result": response.status_code,
+        },
     )
     return response
 
@@ -120,6 +149,24 @@ async def _http_exception_handler(
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorOut(detail=detail, code=exc.status_code).model_dump(),
+    )
+
+
+async def _validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    logger.info(
+        "request validation failed",
+        extra={
+            "request_id": request.headers.get("X-Request-ID"),
+            "operation": f"{request.method} {request.url.path}",
+            "result": 422,
+            "error_category": "request_validation",
+        },
+    )
+    return JSONResponse(
+        status_code=422,
+        content=ErrorOut(detail="Request validation failed", code=422).model_dump(),
     )
 
 

@@ -11,6 +11,9 @@ class RepoSummary(BaseModel):
     forks_count: int
     created_at: str | None = None
     pushed_at: str | None = None
+    default_branch: str | None = None
+    archived: bool = False
+    open_issues_count: int = 0
 
 
 class RepoSearchResponse(BaseModel):

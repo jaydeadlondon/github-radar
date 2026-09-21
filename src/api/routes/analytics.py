@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analytics import service
-from api.deps import get_session
+from analytics.export import leaderboard_csv, series_csv
+from api.deps import get_session, require_read_api_key
 from api.schemas import (
     BurstOut,
     BurstsOut,
@@ -23,7 +24,11 @@ from config import settings
 from db.models import Repository
 from db.repositories import get_repository_by_name
 
-router = APIRouter(prefix="/analytics", tags=["analytics"])
+router = APIRouter(
+    prefix="/analytics",
+    tags=["analytics"],
+    dependencies=[Depends(require_read_api_key)],
+)
 
 MAX_WINDOWS = 5
 
@@ -96,8 +101,9 @@ async def get_series(
     name: str,
     days: int | None = Query(default=None, ge=7, le=365),
     smooth: int = Query(default=0, ge=0, le=90, description="Moving-average window"),
+    format: str = Query(default="json", pattern="^(json|csv)$"),
     session: AsyncSession = Depends(get_session),
-) -> RepoSeriesOut:
+) -> RepoSeriesOut | Response:
     repo = await _load_repo(session, owner, name)
     series, stars_avg, delta_avg = await service.repo_smoothed_series(
         session,
@@ -107,6 +113,16 @@ async def get_series(
     )
 
     owner_part, _, name_part = repo.full_name.partition("/")
+    if format == "csv":
+        return Response(
+            content=series_csv(series),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{owner_part}-{name_part}-series.csv"'
+                )
+            },
+        )
     return RepoSeriesOut(
         repo=RepoBriefOut(
             owner=owner_part,
@@ -214,8 +230,9 @@ async def get_leaderboard(
     language: str | None = Query(default=None, description="Filter by language"),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    format: str = Query(default="json", pattern="^(json|csv)$"),
     session: AsyncSession = Depends(get_session),
-) -> Paginated[LeaderboardItemOut]:
+) -> Paginated[LeaderboardItemOut] | Response:
     if window not in LEADERBOARD_WINDOWS:
         raise HTTPException(
             status_code=422,
@@ -242,6 +259,12 @@ async def get_leaderboard(
                 stars_per_day=velocity.stars_per_day,
                 stars_gained=velocity.stars_gained,
             )
+        )
+    if format == "csv":
+        return Response(
+            content=leaderboard_csv([item.model_dump() for item in items]),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="leaderboard.csv"'},
         )
     return Paginated(
         total=total,

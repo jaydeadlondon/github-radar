@@ -2,6 +2,8 @@ const API = "/api/v1";
 const state = {
   language: "",
   search: "",
+  trackingStatus: "tracked",
+  trackingLabel: "",
   sort: "stars",
   period: "30",
   chartMode: "stars",
@@ -16,6 +18,7 @@ const state = {
   activeBurst: false,
   selectedRepo: null,
   series: null,
+  tracking: null,
   riserWindow: "7",
   velocityMap: new Map(),
   theme: localStorage.getItem("radar-theme") || "dark",
@@ -382,7 +385,7 @@ function setAlertSection(section) {
 function renderReposTable(payload) {
   const wrap = el("repos-table-wrap");
   if (!payload.items.length) {
-    const filtered = state.language || state.search;
+    const filtered = state.language || state.search || state.trackingLabel || state.trackingStatus !== "tracked";
     if (filtered) {
       wrap.innerHTML =
         '<div class="empty">Nothing matches your filters.' +
@@ -408,8 +411,11 @@ function renderReposTable(payload) {
         <th class="cmp-col" title="Pick two or more to compare">⇄</th>
         <th class="sortable" data-sort="name">Repository ${arrow("name")}</th>
         <th>Language</th>
+        <th>Status</th>
+        <th>Label</th>
         <th class="sortable num" data-sort="stars">Stars ${arrow("stars")}</th>
         <th class="num">Forks</th>
+        <th>Actions</th>
       </tr>
     </thead>
     <tbody>
@@ -428,8 +434,22 @@ function renderReposTable(payload) {
           </td>
           <td>${escapeHtml(repo.full_name)} ${velBadge}</td>
           <td>${repo.language ? `<span class="lang-badge">${escapeHtml(repo.language)}</span>` : "—"}</td>
+          <td>
+            <span class="tracking-badge ${escapeHtml(repo.tracking_status || "stale")}"
+              title="${escapeHtml(repo.last_snapshot_error || "")}">${escapeHtml(repo.tracking_status || "stale")}</span>
+          </td>
+          <td>${repo.tracking_label ? escapeHtml(repo.tracking_label) : "—"}</td>
           <td class="num">${formatNumber(repo.stargazers_count)}</td>
           <td class="num">${formatNumber(repo.forks_count)}</td>
+          <td class="repo-actions">
+            ${repo.tracking_paused
+              ? `<button class="btn small repo-action" data-repo-action="resume" data-repo-name="${escapeHtml(repo.full_name)}">Resume</button>`
+              : repo.tracking_enabled
+                ? `<button class="btn small repo-action" data-repo-action="pause" data-repo-name="${escapeHtml(repo.full_name)}">Pause</button>`
+                : `<button class="btn small repo-action" data-repo-action="track" data-repo-name="${escapeHtml(repo.full_name)}">Track</button>`}
+            ${repo.tracking_enabled ? `<button class="btn small danger repo-action" data-repo-action="untrack" data-repo-name="${escapeHtml(repo.full_name)}">Stop</button>` : ""}
+            <button class="btn small repo-action" data-repo-action="refresh" data-repo-name="${escapeHtml(repo.full_name)}">Refresh</button>
+          </td>
         </tr>`;
         })
         .join("")}
@@ -452,6 +472,61 @@ function renderReposTable(payload) {
     box.addEventListener("click", (event) => event.stopPropagation());
     box.addEventListener("change", () => toggleCompare(box));
   });
+  table.querySelectorAll("button.repo-action").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      changeRepositoryTracking(button.dataset.repoName, button.dataset.repoAction);
+    });
+  });
+}
+async function changeRepositoryTracking(fullName, action) {
+  const [owner, name] = fullName.split("/");
+  try {
+    if (action === "refresh") {
+      await sendJSON(`${API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/refresh`, "POST");
+      toast(`Refreshed ${fullName}`);
+    } else if (action === "untrack") {
+      await sendJSON(`${API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/track`, "DELETE");
+      toast(`Stopped tracking ${fullName}`);
+    } else if (action === "track") {
+      await sendJSON(`${API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/track`, "POST", {});
+      toast(`Tracking ${fullName}`);
+    } else {
+      await sendJSON(
+        `${API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/tracking`,
+        "PATCH",
+        { paused: action === "pause" },
+      );
+      toast(`${action === "pause" ? "Paused" : "Resumed"} ${fullName}`);
+    }
+    await loadRepos();
+    if (state.selectedRepo === fullName) await selectRepo(fullName);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+async function trackRepositoryFromForm(event) {
+  event.preventDefault();
+  const fullName = el("track-repository").value.trim();
+  const label = el("track-label").value.trim();
+  if (!fullName || fullName.split("/").length !== 2) {
+    toast("Use owner/name format", "warn");
+    return;
+  }
+  const [owner, name] = fullName.split("/");
+  try {
+    await sendJSON(
+      `${API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/track`,
+      "POST",
+      label ? { label } : {},
+    );
+    el("track-repository").value = "";
+    el("track-label").value = "";
+    toast(`Tracking ${fullName}`);
+    await loadRepos();
+  } catch (err) {
+    toast(err.message, "error");
+  }
 }
 function showTableSpinner() {
   el("repos-table-wrap").innerHTML =
@@ -464,6 +539,12 @@ async function loadRepos() {
   const params = new URLSearchParams({ sort: state.sort, limit: "100" });
   if (state.language) params.set("language", state.language);
   if (state.search) params.set("q", state.search);
+  if (["tracked", "active", "paused", "untracked", "all"].includes(state.trackingStatus)) {
+    params.set("tracking", state.trackingStatus);
+  } else if (state.trackingStatus) {
+    params.set("tracking_status", state.trackingStatus);
+  }
+  if (state.trackingLabel) params.set("label", state.trackingLabel);
   showTableSpinner();
   try {
     const payload = await fetchJSON(
@@ -501,6 +582,7 @@ async function selectRepo(fullName) {
       loadBursts(fullName, periodDays()),
     ]);
     state.series = series;
+    state.tracking = detail.tracking || null;
     state.bursts = bursts ? bursts.items : [];
     state.activeBurst = bursts ? bursts.active_burst : false;
     renderChart();
@@ -509,6 +591,7 @@ async function selectRepo(fullName) {
     renderChartSubtitle(fullName, detail.latest_snapshot);
   } catch (err) {
     state.series = null;
+    state.tracking = null;
     state.bursts = [];
     state.activeBurst = false;
     el("chart-sub").textContent = `${fullName} — failed to load history`;
@@ -526,6 +609,15 @@ function renderChartSubtitle(fullName, latest) {
   }
   if (state.bursts.length) {
     parts.push(`${state.bursts.length} burst(s) in this window`);
+  }
+  if (state.tracking) {
+    parts.push(`tracking: ${state.tracking.status}`);
+    if (state.tracking.status === "failed" && state.tracking.last_snapshot_error) {
+      parts.push(`last error: ${state.tracking.last_snapshot_error}`);
+    }
+    if (state.tracking.snapshot_count < 2 && state.tracking.status !== "failed") {
+      parts.push("not enough data for analytics");
+    }
   }
   const subtitle = el("chart-sub");
   subtitle.textContent = parts.join(" — ");
@@ -858,6 +950,20 @@ function init() {
   el("language-filter").addEventListener("change", (event) => {
     state.language = event.target.value;
     loadLeaderboardAndRepos();
+  });
+  el("tracking-status-filter").addEventListener("change", (event) => {
+    state.trackingStatus = event.target.value;
+    loadRepos();
+  });
+  let labelFilterTimer = null;
+  el("tracking-label-filter").addEventListener("input", (event) => {
+    state.trackingLabel = event.target.value.trim();
+    clearTimeout(labelFilterTimer);
+    labelFilterTimer = setTimeout(loadRepos, 250);
+  });
+  el("track-btn").addEventListener("click", trackRepositoryFromForm);
+  el("track-repository").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") trackRepositoryFromForm(event);
   });
   el("period-select").addEventListener("change", (event) => {
     state.period = event.target.value;

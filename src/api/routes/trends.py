@@ -3,11 +3,15 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_session
+from api.deps import get_session, require_read_api_key
 from api.schemas import TrendOut
 from db.repositories import top_growth
 
-router = APIRouter(prefix="/trends", tags=["trends"])
+router = APIRouter(
+    prefix="/trends",
+    tags=["trends"],
+    dependencies=[Depends(require_read_api_key)],
+)
 
 ALLOWED_WINDOWS = (7, 30, 90)
 

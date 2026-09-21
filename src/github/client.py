@@ -18,6 +18,7 @@ from github.errors import (
     RateLimitError,
 )
 from github.models import RepoSearchResponse, RepoSummary
+from observability import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -70,17 +71,62 @@ class GitHubClient:
         payload = await self._request("GET", f"/repos/{full_name}")
         return RepoSummary.model_validate(payload)
 
+    async def get_rate_limit(self) -> dict[str, int | str]:
+        payload = await self._request("GET", "/rate_limit")
+        resources = payload.get("resources", {}) if isinstance(payload, dict) else {}
+        core = resources.get("core", {}) if isinstance(resources, dict) else {}
+        return {
+            "resource": "core",
+            "limit": int(core.get("limit", 0)),
+            "remaining": int(core.get("remaining", 0)),
+            "used": int(core.get("used", 0)),
+            "reset": int(core.get("reset", 0)),
+        }
+
+    async def get_stargazer_dates(
+        self,
+        full_name: str,
+        *,
+        max_pages: int | None = None,
+    ) -> list[str]:
+        """Return GitHub's available ``starred_at`` timestamps.
+
+        The preview media type is required for the timestamp field.  The
+        method intentionally returns strings so callers can decide how to
+        handle malformed or timezone-less values without losing the raw API
+        payload.
+        """
+
+        dates: list[str] = []
+        async for item in self.paginate(
+            f"/repos/{full_name}/stargazers",
+            params={"per_page": 100},
+            headers={"Accept": "application/vnd.github.star+json"},
+            max_pages=max_pages,
+        ):
+            starred_at = item.get("starred_at")
+            if isinstance(starred_at, str) and starred_at:
+                dates.append(starred_at)
+        return dates
+
     async def paginate(
         self,
         path: str,
         params: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+        max_pages: int | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         params = dict(params or {})
         per_page = int(params.get("per_page", 100))
         page = 1
         while True:
+            if max_pages is not None and page > max_pages:
+                break
             page_params = {**params, "page": page, "per_page": per_page}
-            payload = await self._request("GET", path, params=page_params)
+            payload = await self._request(
+                "GET", path, params=page_params, headers=headers
+            )
             if isinstance(payload, dict) and "items" in payload:
                 items = payload["items"]
             elif isinstance(payload, list):
@@ -98,9 +144,10 @@ class GitHubClient:
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         cache_key = f"{method} {path} {self._sorted_params(kwargs.get('params'))}"
         cached = self._etag_cache.get(cache_key)
+        extra_headers = kwargs.pop("headers", None) or {}
 
         for attempt in range(settings.max_retries + 1):
-            headers = dict(self._headers)
+            headers = {**self._headers, **extra_headers}
             if cached is not None:
                 headers["If-None-Match"] = cached[0]
 
@@ -109,12 +156,44 @@ class GitHubClient:
                     method, path, headers=headers, **kwargs
                 )
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
+                metrics.increment(
+                    "github_api_requests",
+                    labels={"method": method, "status": "network_error"},
+                )
                 if attempt >= settings.max_retries:
                     raise ApiError(
                         f"network error after {attempt + 1} attempts: {exc}"
                     ) from exc
                 await self._backoff(attempt)
                 continue
+
+            metrics.increment(
+                "github_api_requests",
+                labels={"method": method, "status": response.status_code},
+            )
+            for header, metric_name in (
+                ("X-RateLimit-Limit", "github_rate_limit_limit"),
+                ("X-RateLimit-Remaining", "github_rate_limit_remaining"),
+                ("X-RateLimit-Used", "github_rate_limit_used"),
+                ("X-RateLimit-Reset", "github_rate_limit_reset"),
+            ):
+                value = response.headers.get(header)
+                if value and value.isdigit():
+                    metrics.set_gauge(metric_name, int(value), labels={"resource": "core"})
+            remaining_header = response.headers.get("X-RateLimit-Remaining")
+            if (
+                remaining_header
+                and remaining_header.isdigit()
+                and int(remaining_header) <= settings.github_rate_limit_warning_remaining
+            ):
+                metrics.set_gauge("github_rate_limit_warning", 1, labels={"resource": "core"})
+                logger.warning(
+                    "GitHub API quota is nearly exhausted",
+                    extra={
+                        "operation": "github_request",
+                        "result": "rate_limit_warning",
+                    },
+                )
 
             if response.status_code == 304 and cached is not None:
                 return cached[1]
@@ -128,6 +207,19 @@ class GitHubClient:
 
             if response.status_code in (403, 429):
                 retry_after = response.headers.get("Retry-After")
+                remaining = response.headers.get("X-RateLimit-Remaining")
+                message = response.text[:200]
+                rate_limited = response.status_code == 429 or bool(
+                    retry_after
+                    or remaining == "0"
+                    or "rate limit" in message.lower()
+                    or "secondary rate" in message.lower()
+                )
+                if not rate_limited:
+                    raise ApiError(
+                        f"GitHub API error {response.status_code}: {message}",
+                        response.status_code,
+                    )
                 if retry_after and retry_after.isdigit():
                     await asyncio.sleep(float(retry_after))
                     continue

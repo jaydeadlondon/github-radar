@@ -119,7 +119,7 @@ async def leaderboard(
     offset: int,
     language: str | None = None,
 ) -> tuple[int, list[tuple[Repository, VelocityResult, int]]]:
-    stmt = select(Repository)
+    stmt = select(Repository).where(Repository.tracking_enabled.is_(True))
     if language:
         stmt = stmt.where(Repository.language == language)
     repos = list((await session.execute(stmt)).scalars())

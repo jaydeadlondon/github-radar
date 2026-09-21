@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alerts import RuleSpec, validate_rule
-from api.deps import get_session
+from alerts.webhook import deliver_event, deliver_test_endpoint
+from api.deps import get_session, require_admin_api_key, require_read_api_key
 from api.schemas import (
     AcknowledgeAllOut,
+    AlertDeliveryOut,
     AlertEventOut,
     AlertEventUpdate,
     AlertKind,
@@ -14,8 +16,13 @@ from api.schemas import (
     AlertRuleOut,
     AlertRuleUpdate,
     AlertSummaryOut,
+    DeliveryTestOut,
+    NotificationEndpointCreate,
+    NotificationEndpointOut,
+    NotificationEndpointUpdate,
     Paginated,
 )
+from config import settings
 from db.alerts import (
     acknowledge_all_events,
     alert_summary,
@@ -27,10 +34,236 @@ from db.alerts import (
     list_rules,
     set_event_acknowledged,
 )
-from db.models import AlertEvent, AlertRule
+from db.models import AlertDelivery, AlertEvent, AlertRule, NotificationEndpoint
+from db.notifications import (
+    create_endpoint,
+    get_delivery,
+    get_endpoint,
+    get_endpoint_by_name,
+    list_deliveries,
+    list_endpoints,
+    set_endpoint_enabled,
+)
 from db.repositories import get_repository_by_name
+from security import UnsafeURL, validate_webhook_url
 
-router = APIRouter(prefix="/alerts", tags=["alerts"])
+router = APIRouter(
+    prefix="/alerts",
+    tags=["alerts"],
+    dependencies=[Depends(require_read_api_key)],
+)
+
+
+def _endpoint_out(endpoint: NotificationEndpoint) -> NotificationEndpointOut:
+    return NotificationEndpointOut(
+        id=endpoint.id,
+        name=endpoint.name,
+        provider=endpoint.provider,
+        url_configured=bool(endpoint.url),
+        enabled=endpoint.enabled,
+        failure_count=endpoint.failure_count,
+        disabled_at=endpoint.disabled_at,
+        last_delivery_at=endpoint.last_delivery_at,
+        last_error=endpoint.last_error,
+        created_at=endpoint.created_at,
+        updated_at=endpoint.updated_at,
+    )
+
+
+def _delivery_out(delivery: AlertDelivery) -> AlertDeliveryOut:
+    return AlertDeliveryOut(
+        id=delivery.id,
+        event_id=delivery.event_id,
+        endpoint_id=delivery.endpoint_id,
+        attempt=delivery.attempt,
+        status=delivery.status,
+        response_status=delivery.response_status,
+        error=delivery.error,
+        attempted_at=delivery.attempted_at,
+        delivered_at=delivery.delivered_at,
+        next_attempt_at=delivery.next_attempt_at,
+        created_at=delivery.created_at,
+    )
+
+
+@router.get("/endpoints", response_model=Paginated[NotificationEndpointOut])
+async def get_notification_endpoints(
+    enabled: bool | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> Paginated[NotificationEndpointOut]:
+    endpoints, total = await list_endpoints(
+        session,
+        enabled=enabled,
+        limit=limit,
+        offset=offset,
+    )
+    next_offset = offset + len(endpoints) if offset + len(endpoints) < total else None
+    return Paginated(
+        total=total,
+        offset=offset,
+        limit=limit,
+        next_offset=next_offset,
+        items=[_endpoint_out(endpoint) for endpoint in endpoints],
+    )
+
+
+@router.post(
+    "/endpoints",
+    response_model=NotificationEndpointOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin_api_key)],
+)
+async def post_notification_endpoint(
+    payload: NotificationEndpointCreate,
+    session: AsyncSession = Depends(get_session),
+) -> NotificationEndpointOut:
+    if await get_endpoint_by_name(session, payload.name) is not None:
+        raise HTTPException(status_code=409, detail="notification endpoint already exists")
+    try:
+        url = validate_webhook_url(payload.url)
+    except UnsafeURL as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    endpoint = await create_endpoint(
+        session,
+        name=payload.name,
+        provider=payload.provider,
+        url=url,
+        signing_secret=payload.signing_secret,
+    )
+    if not payload.enabled:
+        await set_endpoint_enabled(session, endpoint, False)
+    await session.commit()
+    return _endpoint_out(endpoint)
+
+
+@router.patch(
+    "/endpoints/{endpoint_id}",
+    response_model=NotificationEndpointOut,
+    dependencies=[Depends(require_admin_api_key)],
+)
+async def patch_notification_endpoint(
+    endpoint_id: int,
+    payload: NotificationEndpointUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> NotificationEndpointOut:
+    endpoint = await get_endpoint(session, endpoint_id)
+    if endpoint is None:
+        raise HTTPException(status_code=404, detail="notification endpoint not found")
+    fields = payload.model_fields_set
+    if "url" in fields and payload.url is not None:
+        try:
+            endpoint.url = validate_webhook_url(payload.url)
+        except UnsafeURL as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if "provider" in fields and payload.provider is not None:
+        endpoint.provider = payload.provider
+    if "signing_secret" in fields:
+        endpoint.signing_secret = payload.signing_secret
+    if "enabled" in fields and payload.enabled is not None:
+        await set_endpoint_enabled(session, endpoint, payload.enabled)
+    await session.commit()
+    await session.refresh(endpoint)
+    return _endpoint_out(endpoint)
+
+
+@router.delete(
+    "/endpoints/{endpoint_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin_api_key)],
+)
+async def delete_notification_endpoint(
+    endpoint_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    endpoint = await get_endpoint(session, endpoint_id)
+    if endpoint is None:
+        raise HTTPException(status_code=404, detail="notification endpoint not found")
+    await session.delete(endpoint)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/endpoints/{endpoint_id}/test",
+    response_model=DeliveryTestOut,
+    dependencies=[Depends(require_admin_api_key)],
+)
+async def test_notification_endpoint(
+    endpoint_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> DeliveryTestOut:
+    endpoint = await get_endpoint(session, endpoint_id)
+    if endpoint is None:
+        raise HTTPException(status_code=404, detail="notification endpoint not found")
+    sent, error = await deliver_test_endpoint(
+        endpoint,
+        timeout_seconds=settings.alert_webhook_timeout_seconds,
+        max_attempts=settings.webhook_max_attempts,
+        backoff_base_seconds=settings.webhook_backoff_base_seconds,
+        signing_secret=endpoint.signing_secret or settings.webhook_signing_secret,
+    )
+    endpoint.last_error = error
+    if sent:
+        endpoint.failure_count = 0
+    await session.commit()
+    return DeliveryTestOut(sent=sent, error=error)
+
+
+@router.get("/deliveries", response_model=Paginated[AlertDeliveryOut])
+async def get_notification_deliveries(
+    event_id: int | None = Query(default=None, ge=1),
+    endpoint_id: int | None = Query(default=None, ge=1),
+    delivery_status: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> Paginated[AlertDeliveryOut]:
+    deliveries, total = await list_deliveries(
+        session,
+        event_id=event_id,
+        endpoint_id=endpoint_id,
+        status=delivery_status,
+        limit=limit,
+        offset=offset,
+    )
+    next_offset = offset + len(deliveries) if offset + len(deliveries) < total else None
+    return Paginated(
+        total=total,
+        offset=offset,
+        limit=limit,
+        next_offset=next_offset,
+        items=[_delivery_out(delivery) for delivery in deliveries],
+    )
+
+
+@router.post(
+    "/deliveries/{delivery_id}/retry",
+    response_model=DeliveryTestOut,
+    dependencies=[Depends(require_admin_api_key)],
+)
+async def retry_notification_delivery(
+    delivery_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> DeliveryTestOut:
+    delivery = await get_delivery(session, delivery_id)
+    if delivery is None or delivery.endpoint is None:
+        raise HTTPException(status_code=404, detail="retryable delivery not found")
+    event = delivery.event
+    endpoint = delivery.endpoint
+    sent = await deliver_event(
+        session,
+        event,
+        webhook_url=endpoint.url,
+        timeout_seconds=settings.alert_webhook_timeout_seconds,
+        max_attempts=settings.webhook_max_attempts,
+        backoff_base_seconds=settings.webhook_backoff_base_seconds,
+        signing_secret=endpoint.signing_secret or settings.webhook_signing_secret,
+        provider=endpoint.provider,
+        endpoint=endpoint,
+    )
+    return DeliveryTestOut(sent=sent, error=None if sent else event.delivery_error)
 
 
 def _validated_spec(spec: RuleSpec) -> RuleSpec:
@@ -99,6 +332,7 @@ async def get_rules(
     "/rules",
     response_model=AlertRuleOut,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin_api_key)],
 )
 async def post_rule(
     payload: AlertRuleCreate,
@@ -130,7 +364,11 @@ async def get_rule_by_id(
     return _rule_out(await _rule_or_404(session, rule_id))
 
 
-@router.patch("/rules/{rule_id}", response_model=AlertRuleOut)
+@router.patch(
+    "/rules/{rule_id}",
+    response_model=AlertRuleOut,
+    dependencies=[Depends(require_admin_api_key)],
+)
 async def patch_rule(
     rule_id: int,
     payload: AlertRuleUpdate,
@@ -166,7 +404,11 @@ async def patch_rule(
     return _rule_out(rule)
 
 
-@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/rules/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin_api_key)],
+)
 async def remove_rule(
     rule_id: int,
     session: AsyncSession = Depends(get_session),
@@ -228,7 +470,11 @@ async def get_events(
     )
 
 
-@router.post("/events/acknowledge-all", response_model=AcknowledgeAllOut)
+@router.post(
+    "/events/acknowledge-all",
+    response_model=AcknowledgeAllOut,
+    dependencies=[Depends(require_admin_api_key)],
+)
 async def acknowledge_every_event(
     session: AsyncSession = Depends(get_session),
 ) -> AcknowledgeAllOut:
@@ -245,7 +491,11 @@ async def get_event_by_id(
     return _event_out(await _event_or_404(session, event_id))
 
 
-@router.patch("/events/{event_id}", response_model=AlertEventOut)
+@router.patch(
+    "/events/{event_id}",
+    response_model=AlertEventOut,
+    dependencies=[Depends(require_admin_api_key)],
+)
 async def patch_event(
     event_id: int,
     payload: AlertEventUpdate,

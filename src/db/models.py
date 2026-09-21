@@ -33,6 +33,10 @@ class Repository(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("full_name", name="uq_repositories_full_name"),
         Index("ix_repositories_language", "language"),
+        Index("ix_repositories_tracking_enabled", "tracking_enabled"),
+        Index("ix_repositories_tracking_paused", "tracking_paused"),
+        Index("ix_repositories_tracking_label", "tracking_label"),
+        Index("ix_repositories_last_snapshot_attempt", "last_snapshot_attempt_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -42,6 +46,26 @@ class Repository(TimestampMixin, Base):
     language: Mapped[str | None] = mapped_column(String(64))
     github_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     github_pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    default_branch: Mapped[str | None] = mapped_column(String(255))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # A row can remain known after tracking is removed.  Existing repositories
+    # are enabled by the migration so v0.7 keeps its historical behaviour.
+    tracking_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", nullable=False
+    )
+    tracking_paused: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    tracking_label: Mapped[str | None] = mapped_column(String(100))
+    last_successful_snapshot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_snapshot_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_snapshot_error: Mapped[str | None] = mapped_column(Text)
+    next_snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     snapshots: Mapped[list["RepoSnapshot"]] = relationship(
         back_populates="repository",
@@ -67,12 +91,46 @@ class RepoSnapshot(TimestampMixin, Base):
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+    quality_status: Mapped[str] = mapped_column(
+        String(24), default="accepted", server_default="accepted", nullable=False
+    )
+    quality_reason: Mapped[str | None] = mapped_column(String(128))
 
     repository: Mapped["Repository"] = relationship(back_populates="snapshots")
 
     __table_args__ = (
         Index("ix_repo_snapshots_repo_id_observed_at", "repo_id", "observed_at"),
+        Index("ix_repo_snapshots_quality_status", "quality_status"),
     )
+
+
+class JobLock(Base):
+    __tablename__ = "job_locks"
+
+    name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_job_locks_expires_at", "expires_at"),)
+
+
+class SnapshotJob(TimestampMixin, Base):
+    __tablename__ = "snapshot_jobs"
+    __table_args__ = (
+        Index("ix_snapshot_jobs_status_started", "status", "started_at"),
+        Index("ix_snapshot_jobs_job_type_started", "job_type", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    total_repositories: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    succeeded_repositories: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_repositories: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 class AlertRule(TimestampMixin, Base):
@@ -93,6 +151,30 @@ class AlertRule(TimestampMixin, Base):
     repository: Mapped["Repository"] = relationship(back_populates="alert_rules")
     events: Mapped[list["AlertEvent"]] = relationship(
         back_populates="rule",
+        passive_deletes=True,
+    )
+
+
+class NotificationEndpoint(TimestampMixin, Base):
+    __tablename__ = "notification_endpoints"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_notification_endpoints_name"),
+        Index("ix_notification_endpoints_enabled", "enabled"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider: Mapped[str] = mapped_column(String(24), default="generic", nullable=False)
+    url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    signing_secret: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    deliveries: Mapped[list["AlertDelivery"]] = relationship(
+        back_populates="endpoint",
         passive_deletes=True,
     )
 
@@ -128,3 +210,35 @@ class AlertEvent(TimestampMixin, Base):
     delivery_error: Mapped[str | None] = mapped_column(Text)
 
     rule: Mapped["AlertRule | None"] = relationship(back_populates="events")
+    deliveries: Mapped[list["AlertDelivery"]] = relationship(
+        back_populates="event",
+        cascade="all, delete-orphan",
+    )
+
+
+class AlertDelivery(TimestampMixin, Base):
+    __tablename__ = "alert_deliveries"
+    __table_args__ = (
+        Index("ix_alert_deliveries_event_created", "event_id", "created_at"),
+        Index("ix_alert_deliveries_status_next_attempt", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("alert_events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    endpoint_id: Mapped[int | None] = mapped_column(
+        ForeignKey("notification_endpoints.id", ondelete="SET NULL"), index=True
+    )
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    event: Mapped["AlertEvent"] = relationship(back_populates="deliveries")
+    endpoint: Mapped["NotificationEndpoint | None"] = relationship(
+        back_populates="deliveries"
+    )

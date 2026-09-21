@@ -12,6 +12,7 @@ async def save_repos(session: AsyncSession, repos: list[RepoSummary]) -> int:
             stored.id,
             stargazers=repo.stargazers_count,
             forks=repo.forks_count,
+            open_issues=repo.open_issues_count,
         )
     await session.commit()
     return len(repos)

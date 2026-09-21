@@ -1,0 +1,49 @@
+services:
+  radar-migrate:
+    build: .
+    command: ["migrate"]
+    env_file:
+      - .env
+    environment:
+      RADAR_ENVIRONMENT: production
+      RADAR_DATABASE_URL: sqlite+aiosqlite:////data/radar.db
+    volumes:
+      - radar-data:/data
+    restart: "no"
+
+  radar-api:
+    build: .
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - .env
+    environment:
+      RADAR_ENVIRONMENT: production
+      RADAR_DATABASE_URL: sqlite+aiosqlite:////data/radar.db
+      RADAR_SCHEDULER_ENABLED: "false"
+    depends_on:
+      radar-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    volumes:
+      - radar-data:/data
+    restart: unless-stopped
+
+  radar-worker:
+    build: .
+    command: ["worker"]
+    env_file:
+      - .env
+    environment:
+      RADAR_ENVIRONMENT: production
+      RADAR_DATABASE_URL: sqlite+aiosqlite:////data/radar.db
+      RADAR_SCHEDULER_ENABLED: "false"
+    depends_on:
+      radar-migrate:
+        condition: service_completed_successfully
+    volumes:
+      - radar-data:/data
+    restart: unless-stopped
+
+volumes:
+  radar-data:

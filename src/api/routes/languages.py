@@ -3,10 +3,15 @@ from pydantic import BaseModel
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_session
+from api.deps import get_session, require_read_api_key
 from db.models import Repository, RepoSnapshot
+from db.repositories import ACCEPTED_QUALITY_STATUSES
 
-router = APIRouter(prefix="/languages", tags=["languages"])
+router = APIRouter(
+    prefix="/languages",
+    tags=["languages"],
+    dependencies=[Depends(require_read_api_key)],
+)
 
 
 class LanguageOut(BaseModel):
@@ -24,6 +29,7 @@ async def languages(
             RepoSnapshot.repo_id,
             func.max(RepoSnapshot.observed_at).label("latest_at"),
         )
+        .where(RepoSnapshot.quality_status.in_(ACCEPTED_QUALITY_STATUSES))
         .group_by(RepoSnapshot.repo_id)
         .subquery()
     )
@@ -33,12 +39,14 @@ async def languages(
             func.count().label("repo_count"),
             func.sum(RepoSnapshot.stargazers_count).label("total_stars"),
         )
+        .where(Repository.tracking_enabled.is_(True))
         .join(latest, latest.c.repo_id == Repository.id)
         .join(
             RepoSnapshot,
             and_(
                 RepoSnapshot.repo_id == latest.c.repo_id,
                 RepoSnapshot.observed_at == latest.c.latest_at,
+                RepoSnapshot.quality_status.in_(ACCEPTED_QUALITY_STATUSES),
             ),
         )
         .group_by(Repository.language)
