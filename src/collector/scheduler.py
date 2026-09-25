@@ -33,11 +33,24 @@ def build_scheduler(
 
 
 async def run_snapshot_job() -> None:
-    from collector.pipeline import run_snapshot
+    from collector.jobs import execute_snapshot_job
 
-    logger.info("snapshot run started")
+    logger.info(
+        "snapshot job started",
+        extra={"operation": "snapshot", "result": "running"},
+    )
     try:
-        saved = await run_snapshot()
-        logger.info("snapshot run finished (%s repository(-ies) updated)", saved)
-    except Exception:
-        logger.exception("snapshot run failed")
+        job_id = await execute_snapshot_job()
+        logger.info(
+            "snapshot job finished",
+            extra={"job_id": job_id, "operation": "snapshot", "result": "finished"},
+        )
+    except Exception as exc:
+        logger.exception(
+            "snapshot job failed",
+            extra={
+                "operation": "snapshot",
+                "result": "failed",
+                "error_category": type(exc).__name__,
+            },
+        )
