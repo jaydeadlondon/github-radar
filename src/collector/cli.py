@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -59,6 +60,22 @@ def init_db() -> None:
         console.print("[green]Database initialized.[/green]")
 
     _run_async(_impl)
+
+
+@app.command()
+def migrate(
+    revision: str = typer.Option(
+        "head", "--revision", help="Alembic revision to apply."
+    ),
+) -> None:
+    from alembic.config import Config
+
+    from alembic import command
+
+    root = Path(__file__).resolve().parents[2]
+    alembic_config = Config(str(root / "alembic.ini"))
+    command.upgrade(alembic_config, revision)
+    console.print(f"[green]Database migrated to {revision}.[/green]")
 
 
 @app.command()
