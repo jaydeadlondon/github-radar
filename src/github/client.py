@@ -18,6 +18,7 @@ from github.errors import (
     RateLimitError,
 )
 from github.models import RepoSearchResponse, RepoSummary
+from observability import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -135,12 +136,49 @@ class GitHubClient:
                     method, path, headers=headers, **kwargs
                 )
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
+                metrics.increment(
+                    "github_api_requests",
+                    labels={"method": method, "status": "network_error"},
+                )
                 if attempt >= settings.max_retries:
                     raise ApiError(
                         f"network error after {attempt + 1} attempts: {exc}"
                     ) from exc
                 await self._backoff(attempt)
                 continue
+
+            metrics.increment(
+                "github_api_requests",
+                labels={"method": method, "status": response.status_code},
+            )
+            for header, metric_name in (
+                ("X-RateLimit-Limit", "github_rate_limit_limit"),
+                ("X-RateLimit-Remaining", "github_rate_limit_remaining"),
+                ("X-RateLimit-Used", "github_rate_limit_used"),
+                ("X-RateLimit-Reset", "github_rate_limit_reset"),
+            ):
+                value = response.headers.get(header)
+                if value and value.isdigit():
+                    metrics.set_gauge(
+                        metric_name, int(value), labels={"resource": "core"}
+                    )
+            remaining_header = response.headers.get("X-RateLimit-Remaining")
+            if (
+                remaining_header
+                and remaining_header.isdigit()
+                and int(remaining_header)
+                <= settings.github_rate_limit_warning_remaining
+            ):
+                metrics.set_gauge(
+                    "github_rate_limit_warning", 1, labels={"resource": "core"}
+                )
+                logger.warning(
+                    "GitHub API quota is nearly exhausted",
+                    extra={
+                        "operation": "github_request",
+                        "result": "rate_limit_warning",
+                    },
+                )
 
             if response.status_code == 304 and cached is not None:
                 return cached[1]
