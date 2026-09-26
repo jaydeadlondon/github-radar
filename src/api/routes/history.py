@@ -3,12 +3,16 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_repo_or_404, get_session
+from api.deps import get_repo_or_404, get_session, require_read_api_key
 from api.schemas import SnapshotOut, SnapshotQualityOut
 from db.models import Repository
 from db.repositories import get_history
 
-router = APIRouter(prefix="/repos", tags=["repos"])
+router = APIRouter(
+    prefix="/repos",
+    tags=["repos"],
+    dependencies=[Depends(require_read_api_key)],
+)
 
 
 @router.get(

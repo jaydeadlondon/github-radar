@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alerts import RuleSpec, validate_rule
-from api.deps import get_session
+from api.deps import get_session, require_admin_api_key
 from api.schemas import (
     AcknowledgeAllOut,
     AlertEventOut,
@@ -99,6 +99,7 @@ async def get_rules(
     "/rules",
     response_model=AlertRuleOut,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin_api_key)],
 )
 async def post_rule(
     payload: AlertRuleCreate,
@@ -130,7 +131,11 @@ async def get_rule_by_id(
     return _rule_out(await _rule_or_404(session, rule_id))
 
 
-@router.patch("/rules/{rule_id}", response_model=AlertRuleOut)
+@router.patch(
+    "/rules/{rule_id}",
+    response_model=AlertRuleOut,
+    dependencies=[Depends(require_admin_api_key)],
+)
 async def patch_rule(
     rule_id: int,
     payload: AlertRuleUpdate,
@@ -166,7 +171,11 @@ async def patch_rule(
     return _rule_out(rule)
 
 
-@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/rules/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin_api_key)],
+)
 async def remove_rule(
     rule_id: int,
     session: AsyncSession = Depends(get_session),
@@ -228,7 +237,11 @@ async def get_events(
     )
 
 
-@router.post("/events/acknowledge-all", response_model=AcknowledgeAllOut)
+@router.post(
+    "/events/acknowledge-all",
+    response_model=AcknowledgeAllOut,
+    dependencies=[Depends(require_admin_api_key)],
+)
 async def acknowledge_every_event(
     session: AsyncSession = Depends(get_session),
 ) -> AcknowledgeAllOut:
@@ -245,7 +258,11 @@ async def get_event_by_id(
     return _event_out(await _event_or_404(session, event_id))
 
 
-@router.patch("/events/{event_id}", response_model=AlertEventOut)
+@router.patch(
+    "/events/{event_id}",
+    response_model=AlertEventOut,
+    dependencies=[Depends(require_admin_api_key)],
+)
 async def patch_event(
     event_id: int,
     payload: AlertEventUpdate,

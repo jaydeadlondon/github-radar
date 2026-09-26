@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from analytics import service
 from analytics.export import leaderboard_csv, series_csv
-from api.deps import get_session
+from api.deps import get_session, require_read_api_key
 from api.schemas import (
     BurstOut,
     BurstsOut,
@@ -24,7 +24,11 @@ from config import settings
 from db.models import Repository
 from db.repositories import get_repository_by_name
 
-router = APIRouter(prefix="/analytics", tags=["analytics"])
+router = APIRouter(
+    prefix="/analytics",
+    tags=["analytics"],
+    dependencies=[Depends(require_read_api_key)],
+)
 
 MAX_WINDOWS = 5
 
