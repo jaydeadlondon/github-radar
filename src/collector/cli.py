@@ -609,6 +609,29 @@ def backfill(
     _run_async(_impl)
 
 
+@app.command("quota")
+def quota() -> None:
+    async def _impl() -> None:
+        async with GitHubClient() as client:
+            data = await client.get_rate_limit()
+        table = Table(title="GitHub API rate limit")
+        table.add_column("Resource")
+        table.add_column("Limit", justify="right")
+        table.add_column("Used", justify="right")
+        table.add_column("Remaining", justify="right")
+        table.add_column("Reset epoch", justify="right")
+        table.add_row(
+            str(data["resource"]),
+            str(data["limit"]),
+            str(data["used"]),
+            str(data["remaining"]),
+            str(data["reset"]),
+        )
+        console.print(table)
+
+    _run_async(_impl)
+
+
 @app.command()
 def repo(
     full_name: str = typer.Argument(
