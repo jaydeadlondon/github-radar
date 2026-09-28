@@ -88,6 +88,54 @@ async def _create_delivery(
     return delivery
 
 
+async def deliver_test_endpoint(
+    endpoint: NotificationEndpoint,
+    *,
+    timeout_seconds: float = 10.0,
+    max_attempts: int = 1,
+    backoff_base_seconds: float = 1.0,
+    signing_secret: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> tuple[bool, str | None]:
+    payload = {
+        "event": "test",
+        "provider": endpoint.provider,
+        "endpoint": endpoint.name,
+        "message": "GitHub Radar webhook test",
+        "created_at": _utc_iso(datetime.now(UTC)),
+    }
+    if endpoint.provider == "slack":
+        payload = {"text": "GitHub Radar webhook test"}
+    elif endpoint.provider == "discord":
+        payload = {"content": "GitHub Radar webhook test"}
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    attempts = max(max_attempts, 1)
+    for attempt in range(1, attempts + 1):
+        headers = {"Content-Type": "application/json"}
+        if signing_secret:
+            headers["X-GitHub-Radar-Signature-256"] = _signature(body, signing_secret)
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(timeout_seconds, 0.1),
+                transport=transport,
+                follow_redirects=False,
+            ) as client:
+                response = await client.post(
+                    endpoint.url, content=body, headers=headers
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            error = _delivery_error(exc)[:200]
+            if attempt < attempts and _retryable(exc):
+                await asyncio.sleep(max(backoff_base_seconds, 0) * (2 ** (attempt - 1)))
+                continue
+            return False, error
+        return True, None
+    return False, "webhook test failed"
+
+
 async def deliver_event(
     session: AsyncSession,
     event: AlertEvent,
