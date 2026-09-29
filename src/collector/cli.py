@@ -32,6 +32,10 @@ repos_app = typer.Typer(
     help="Manage repositories and their tracking state.", no_args_is_help=True
 )
 app.add_typer(repos_app, name="repos")
+notifications_app = typer.Typer(
+    help="Manage webhook notification endpoints.", no_args_is_help=True
+)
+app.add_typer(notifications_app, name="notifications")
 
 
 def _run_async(fn: Callable[[], Awaitable[None]]) -> None:
@@ -1163,5 +1167,188 @@ def alerts_acknowledge_all(
             changed = await acknowledge_all_events(session)
             await session.commit()
         console.print(f"[green]Acknowledged {changed} alert event(s).[/green]")
+
+    _run_async(_impl)
+
+
+@notifications_app.command("add")
+def notifications_add(
+    name: str = typer.Argument(..., help="Stable endpoint name."),
+    url: str = typer.Argument(..., help="HTTPS webhook URL."),
+    provider: str = typer.Option(
+        "generic", "--provider", help="generic, slack or discord"
+    ),
+    signing_secret: str | None = typer.Option(
+        None,
+        "--signing-secret",
+        envvar="RADAR_WEBHOOK_SIGNING_SECRET",
+        help="HMAC secret; prefer the environment variable for shell history safety.",
+    ),
+) -> None:
+    if provider not in {"generic", "slack", "discord"}:
+        console.print("[red]Error:[/red] provider must be generic, slack or discord")
+        raise typer.Exit(2)
+    from security import UnsafeURL, validate_webhook_url
+
+    try:
+        url = validate_webhook_url(url)
+    except UnsafeURL as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+    async def _impl() -> None:
+        from db.base import SessionFactory
+        from db.notifications import create_endpoint, get_endpoint_by_name
+
+        async with SessionFactory() as session:
+            if await get_endpoint_by_name(session, name) is not None:
+                console.print(f"[red]Endpoint already exists:[/red] {name}")
+                raise typer.Exit(1)
+            endpoint = await create_endpoint(
+                session,
+                name=name,
+                provider=provider,
+                url=url,
+                signing_secret=signing_secret,
+            )
+            await session.commit()
+        console.print(
+            f"[green]Created notification endpoint #{endpoint.id}: {name}.[/green]"
+        )
+
+    _run_async(_impl)
+
+
+@notifications_app.command("list")
+def notifications_list(
+    enabled: bool | None = typer.Option(None, "--enabled/--disabled"),
+) -> None:
+    async def _impl() -> None:
+        from db.base import SessionFactory
+        from db.notifications import list_endpoints
+
+        async with SessionFactory() as session:
+            endpoints, _total = await list_endpoints(session, enabled=enabled)
+        if not endpoints:
+            console.print("[yellow]No notification endpoints configured.[/yellow]")
+            return
+        table = Table(title="Notification endpoints")
+        table.add_column("ID", justify="right")
+        table.add_column("Name")
+        table.add_column("Provider")
+        table.add_column("Enabled")
+        table.add_column("Failures", justify="right")
+        table.add_column("Last error")
+        for endpoint in endpoints:
+            table.add_row(
+                str(endpoint.id),
+                endpoint.name,
+                endpoint.provider,
+                "yes" if endpoint.enabled else "no",
+                str(endpoint.failure_count),
+                endpoint.last_error or "—",
+            )
+        console.print(table)
+
+    _run_async(_impl)
+
+
+async def _set_notification_enabled(endpoint_id: int, enabled: bool) -> None:
+    from db.base import SessionFactory
+    from db.notifications import get_endpoint, set_endpoint_enabled
+
+    async with SessionFactory() as session:
+        endpoint = await get_endpoint(session, endpoint_id)
+        if endpoint is None:
+            console.print(f"[red]Notification endpoint not found:[/red] {endpoint_id}")
+            raise typer.Exit(1)
+        await set_endpoint_enabled(session, endpoint, enabled)
+        await session.commit()
+    state = "enabled" if enabled else "disabled"
+    console.print(f"[green]Notification endpoint #{endpoint_id} {state}.[/green]")
+
+
+@notifications_app.command("enable")
+def notifications_enable(endpoint_id: int = typer.Argument(..., min=1)) -> None:
+    _run_async(lambda: _set_notification_enabled(endpoint_id, True))
+
+
+@notifications_app.command("disable")
+def notifications_disable(endpoint_id: int = typer.Argument(..., min=1)) -> None:
+    _run_async(lambda: _set_notification_enabled(endpoint_id, False))
+
+
+@notifications_app.command("test")
+def notifications_test(endpoint_id: int = typer.Argument(..., min=1)) -> None:
+    async def _impl() -> None:
+        from alerts.webhook import deliver_test_endpoint
+        from config import settings
+        from db.base import SessionFactory
+        from db.notifications import get_endpoint
+
+        async with SessionFactory() as session:
+            endpoint = await get_endpoint(session, endpoint_id)
+            if endpoint is None:
+                console.print(
+                    f"[red]Notification endpoint not found:[/red] {endpoint_id}"
+                )
+                raise typer.Exit(1)
+            sent, error = await deliver_test_endpoint(
+                endpoint,
+                timeout_seconds=settings.alert_webhook_timeout_seconds,
+                max_attempts=settings.webhook_max_attempts,
+                backoff_base_seconds=settings.webhook_backoff_base_seconds,
+                signing_secret=endpoint.signing_secret
+                or settings.webhook_signing_secret,
+            )
+            endpoint.last_error = error
+            await session.commit()
+        if not sent:
+            console.print(f"[red]Webhook test failed:[/red] {error}")
+            raise typer.Exit(1)
+        console.print("[green]Webhook test delivered.[/green]")
+
+    _run_async(_impl)
+
+
+@notifications_app.command("deliveries")
+def notifications_deliveries(
+    endpoint_id: int | None = typer.Option(None, "--endpoint-id", min=1),
+    delivery_status: str | None = typer.Option(None, "--status"),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, max=100),
+) -> None:
+    async def _impl() -> None:
+        from db.base import SessionFactory
+        from db.notifications import list_deliveries
+
+        async with SessionFactory() as session:
+            deliveries, _total = await list_deliveries(
+                session,
+                endpoint_id=endpoint_id,
+                status=delivery_status,
+                limit=limit,
+            )
+        if not deliveries:
+            console.print("[yellow]No webhook deliveries found.[/yellow]")
+            return
+        table = Table(title="Webhook deliveries")
+        table.add_column("ID", justify="right")
+        table.add_column("Event", justify="right")
+        table.add_column("Endpoint", justify="right")
+        table.add_column("Attempt", justify="right")
+        table.add_column("Status")
+        table.add_column("HTTP", justify="right")
+        table.add_column("Error")
+        for delivery in deliveries:
+            table.add_row(
+                str(delivery.id),
+                str(delivery.event_id),
+                str(delivery.endpoint_id or "—"),
+                str(delivery.attempt),
+                delivery.status,
+                str(delivery.response_status or "—"),
+                delivery.error or "—",
+            )
+        console.print(table)
 
     _run_async(_impl)
