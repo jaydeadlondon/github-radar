@@ -154,7 +154,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/alerts/rules \
 curl http://127.0.0.1:8000/api/v1/alerts/events?acknowledged=false
 curl http://127.0.0.1:8000/api/v1/repos/psf/requests/status
 curl http://127.0.0.1:8000/api/v1/analytics/series/psf/requests?format=csv
-curl 'http://127.0.0.1:8000/api/v1/analytics/leaderboard?window=30&format=csv'
+curl http://127.0.0.1:8000/api/v1/analytics/leaderboard?window=30&format=csv
 ```
 
 Error responses use a consistent shape: `{"detail": "...", "code": 404}`.
