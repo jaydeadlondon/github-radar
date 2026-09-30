@@ -1,4 +1,13 @@
-from api.app import create_app
+from pathlib import Path
+
+from api.app import _dashboard_dir, create_app
+
+
+def test_dashboard_dir_uses_cwd_when_web_exists(tmp_path: Path, monkeypatch) -> None:
+    web = tmp_path / "web"
+    web.mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert _dashboard_dir() == web.resolve()
 
 
 def test_openapi_v09_surface_and_auth_scheme_are_stable():

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 import collector.cli as cli
@@ -115,3 +117,12 @@ def test_repo_requires_owner_name() -> None:
     result = runner.invoke(app, ["repo", "not-a-slug"])
     assert result.exit_code == 2
     assert "Error:" in result.output
+
+
+def test_alembic_ini_path_uses_cwd_when_file_exists(
+    tmp_path: Path, monkeypatch
+) -> None:
+    ini = tmp_path / "alembic.ini"
+    ini.write_text("[alembic]\nscript_location = alembic\n")
+    monkeypatch.chdir(tmp_path)
+    assert cli._alembic_ini_path() == ini.resolve()

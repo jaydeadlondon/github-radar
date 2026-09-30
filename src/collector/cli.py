@@ -49,6 +49,19 @@ def _run_async(fn: Callable[[], Awaitable[None]]) -> None:
     asyncio.run(_wrapper())
 
 
+def _alembic_ini_path() -> Path:
+    candidates = (
+        Path.cwd() / "alembic.ini",
+        Path(__file__).resolve().parents[2] / "alembic.ini",
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    raise FileNotFoundError(
+        "alembic.ini not found. Run the command from the project root."
+    )
+
+
 @app.command()
 def version() -> None:
     console.print(f"github-radar {__version__}")
@@ -77,8 +90,7 @@ def migrate(
 
     from alembic import command
 
-    root = Path(__file__).resolve().parents[2]
-    alembic_config = Config(str(root / "alembic.ini"))
+    alembic_config = Config(str(_alembic_ini_path()))
     command.upgrade(alembic_config, revision)
     console.print(f"[green]Database migrated to {revision}.[/green]")
 

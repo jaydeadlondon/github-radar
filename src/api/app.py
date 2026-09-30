@@ -32,7 +32,16 @@ from version import __version__
 
 logger = logging.getLogger(__name__)
 
-_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+
+def _dashboard_dir() -> Path:
+    candidates = (
+        Path.cwd() / "web",
+        Path(__file__).resolve().parents[2] / "web",
+    )
+    for path in candidates:
+        if path.is_dir():
+            return path
+    raise RuntimeError("Dashboard directory 'web' was not found")
 
 
 class DashboardStaticFiles(StaticFiles):
@@ -105,7 +114,9 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
 
     app.mount(
-        "/", DashboardStaticFiles(directory=_WEB_DIR, html=True), name="dashboard"
+        "/",
+        DashboardStaticFiles(directory=_dashboard_dir(), html=True),
+        name="dashboard",
     )
     return app
 
