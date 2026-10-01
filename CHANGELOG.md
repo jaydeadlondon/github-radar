@@ -2,6 +2,37 @@
 
 All notable changes to this project.
 
+## [0.9.0] — 2026-10-01
+
+### Added
+
+- Dockerfile and Docker Compose production baseline with migration, API and
+  independent worker services, healthcheck and persistent SQLite volume
+- `radar worker`, durable snapshot jobs, graceful shutdown, retry/backoff,
+  global database lease and per-repository overlap protection
+- Notification endpoint management API and CLI, durable delivery attempt history,
+  generic/Slack/Discord-compatible payloads, HMAC signatures, test delivery,
+  retries and automatic disablement after repeated failures
+- Scoped `X-API-Key` authentication with read/admin behavior, production
+  configuration diagnostics and safe secret redaction
+- `/ready`, `/metrics`, job status, GitHub quota/operations endpoints and
+  structured text/JSON logging with request/job/repository correlation fields
+- OpenAPI contract validation, API version headers, migration upgrade coverage
+  from the v0.7 schema and documented backup/restore/troubleshooting procedures
+
+### Changed
+
+- Package version and GitHub client user agent are now 0.9
+- The API no longer starts the scheduler by default; the worker owns scheduled
+  collection in deployment mode
+- Webhook delivery state is durable and observable without exposing configured
+  URLs or signing material
+
+### Fixed
+
+- Snapshot and GitHub transient failures preserve repository state and are
+  represented in job/delivery history instead of being silently discarded
+
 ## [0.8.0] — 2026-09-20
 
 ### Added
