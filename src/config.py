@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     api_auth_enabled: bool = False
     api_key: str = ""
     admin_api_key: str = ""
+    max_request_bytes: int = 262_144
 
     analytics_rolling_window: int = 14
     analytics_burst_z: float = 2.5
@@ -74,6 +75,8 @@ def configuration_warnings(config: Settings | None = None) -> list[str]:
         warnings.append("webhook max attempts must be at least 1")
     if active.environment.lower() in {"production", "prod"} and not active.github_token:
         warnings.append("GitHub token is not configured")
+    if active.max_request_bytes < 1024:
+        warnings.append("request size limit is unusually small")
     return warnings
 
 
