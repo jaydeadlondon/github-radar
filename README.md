@@ -4,8 +4,11 @@ Analytics service that tracks rising stars on GitHub: it collects data about
 repositories, builds star-growth history, and detects projects that are
 "taking off" before everyone else.
 
-> **Status:** version 0.9 — independently deployable API/worker services, durable jobs and
-> webhook delivery, scoped API keys, operational diagnostics and structured observability.
+> **Status:** version 1.0 — the public contract (domain model, CLI, REST API v1 and
+> dashboard) is frozen. Independently deployable API/worker services, durable jobs and
+> webhook delivery, scoped API keys, an audited security posture and a documented
+> database lifecycle. Breaking changes now require an `/api/v2` namespace or the
+> deprecation policy in [docs/API_V1.md](docs/API_V1.md).
 
 ## Features
 
@@ -117,7 +120,7 @@ radar notifications deliveries --limit 20
 radar quota
 radar worker --once
 
-## Deployment (v0.9)
+## Deployment (v1.0)
 
 ### Docker Compose: documented single-command startup
 
@@ -503,8 +506,23 @@ The frontend is plain HTML/CSS/JS with ECharts bundled locally in
 The test suite preserves the 0.5–0.8 analytics/API/alert coverage and adds
 tracking migrations, data-quality validation, collection status, backfill,
 export, tracking API/CLI, worker locking, job lifecycle, notification delivery,
-authentication, operational endpoints, OpenAPI contract checks and v0.7→v0.9
-upgrade coverage.
+authentication, operational endpoints, OpenAPI contract checks, CLI/API v1
+contract freezes, security hardening, dashboard accessibility and performance
+guards, end-to-end database lifecycle checks, and v0.3→1.0 / v0.6→1.0 upgrade
+coverage.
+
+For the complete release checklist (version consistency, migrations on a
+throwaway database, API smoke test, formats, security audit) run:
+
+```bash
+.venv/bin/python scripts/release_check.py
+```
+
+For an offline performance snapshot of the analytics reads:
+
+```bash
+.venv/bin/python scripts/benchmark.py --repos 200 --days 240 --plans
+```
 
 ```bash
 pip install -e ".[dev]"
