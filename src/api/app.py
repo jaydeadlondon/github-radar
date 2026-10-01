@@ -86,6 +86,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if scheduler is not None:
         scheduler.shutdown(wait=False)
 
+    # Refresh planner statistics while the database is still open; this is the
+    # maintenance window SQLite recommends for PRAGMA optimize.
+    from db.base import optimize_database
+
+    await optimize_database()
     await engine.dispose()
 
 

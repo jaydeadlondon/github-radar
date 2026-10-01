@@ -423,6 +423,31 @@ def db_status(
     )
 
 
+@db_app.command("optimize")
+def db_optimize() -> None:
+    """Refresh query-planner statistics (SQLite ``PRAGMA optimize``).
+
+    Safe to run at any time; it never modifies data.  The worker and the API
+    call the same helper on shutdown, so a long-running installation keeps
+    using the covering indexes added in migration 0007.
+    """
+
+    from db.base import engine, optimize_database
+    from db.lifecycle import database_state
+
+    state = database_state()
+    if not state.exists or not state.schema_present:
+        _fail(
+            "Database is not initialised. Run `radar init-db` or `radar migrate`.",
+            ExitCode.DATABASE,
+        )
+    _run_async(optimize_database)
+    _info(
+        f"Optimised {engine.url.get_backend_name()} statistics for "
+        f"{state.location or state.url}"
+    )
+
+
 @app.command()
 def backup(
     destination: str | None = typer.Argument(
