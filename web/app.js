@@ -21,7 +21,7 @@ const state = {
   tracking: null,
   riserWindow: "7",
   velocityMap: new Map(),
-  theme: localStorage.getItem("radar-theme") || "dark",
+  theme: "dark",
 };
 const el = (id) => document.getElementById(id);
 const periodDays = () => (state.period === "all" ? 365 : Number(state.period));
@@ -77,11 +77,65 @@ function toast(message, type = "") {
   setTimeout(() => node.remove(), 5000);
 }
 function formatNumber(value) {
-  return new Intl.NumberFormat("en-US", { notation: "compact" }).format(value);
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "—";
+  }
+  return new Intl.NumberFormat(undefined, { notation: "compact" }).format(value);
 }
 function formatDate(value) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZoneName: "short",
+  });
+}
+function formatDay(value) {
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? "—" : date.toISOString().slice(0, 10);
+}
+/* A single place for loading/empty/error rendering so every panel behaves the
+   same way and screen readers get the right roles. */
+function setRegionState(node, kind, message, options = {}) {
+  if (!node) return;
+  const hint = options.hint || "";
+  node.innerHTML = "";
+  const wrapper = document.createElement("div");
+  wrapper.className = `empty ${kind}`;
+  wrapper.setAttribute("role", kind === "error" ? "alert" : "status");
+  const spinner =
+    kind === "loading"
+      ? '<span class="spinner" aria-hidden="true"></span> '
+      : "";
+  wrapper.innerHTML =
+    spinner +
+    escapeHtml(message) +
+    (hint ? `<div class="hint">${escapeHtml(hint)}</div>` : "");
+  if (typeof options.retry === "function") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn small";
+    button.textContent = "Retry";
+    button.addEventListener("click", options.retry);
+    wrapper.appendChild(button);
+  }
+  node.appendChild(wrapper);
+  setBusy(node, kind === "loading");
+}
+function setBusy(node, busy) {
+  if (node) node.setAttribute("aria-busy", busy ? "true" : "false");
+}
+function announce(message) {
+  const region = el("live-region");
+  if (!region) return;
+  region.textContent = "";
+  window.setTimeout(() => {
+    region.textContent = message;
+  }, 50);
+}
+function describeError(err) {
+  return err && err.message ? err.message : "unexpected error";
 }
 function escapeHtml(value) {
   return String(value)
@@ -97,8 +151,9 @@ async function refreshStatusBadge() {
     const health = await fetchJSON("/health");
     badge.textContent = health.status === "ok" ? "● online" : "● degraded";
     badge.classList.toggle("ok", health.status === "ok");
-  } catch (_) {
+  } catch (err) {
     badge.textContent = "● offline";
+    badge.title = `Health check failed: ${describeError(err)}`;
   }
 }
 /* ---------- alert inbox ---------- */
@@ -126,7 +181,7 @@ async function loadAlertSummary() {
   try {
     renderAlertSummary(await fetchJSON(`${API}/alerts/summary`));
   } catch (err) {
-    if (state.alertsOpen) toast(`Alerts: ${err.message}`, "warn");
+    if (state.alertsOpen) toast(`Alerts: ${describeError(err)}`, "warn");
   }
 }
 function renderAlertEvents(payload) {
@@ -178,31 +233,78 @@ async function loadAlertEvents() {
   const params = new URLSearchParams({ limit: "50" });
   if (state.alertView === "unread") params.set("acknowledged", "false");
   if (state.alertKind) params.set("kind", state.alertKind);
-  el("alert-events").innerHTML =
-    '<div class="empty"><span class="spinner"></span> Loading alerts…</div>';
+  const target = el("alert-events");
+  setRegionState(target, "loading", "Loading alerts…");
   try {
     const payload = await fetchJSON(
       `${API}/alerts/events?${params}`,
       alertEventsAbortController.signal,
     );
     renderAlertEvents(payload);
+    setBusy(target, false);
   } catch (err) {
     if (err.name === "AbortError") return;
-    el("alert-events").innerHTML =
-      `<div class="empty">Failed to load alerts.<div class="hint">${escapeHtml(err.message)}</div></div>`;
+    setRegionState(target, "error", "Failed to load alerts.", {
+      hint: describeError(err),
+      retry: loadAlertEvents,
+    });
   }
 }
+let focusBeforeAlerts = null;
 function setAlertsOpen(open) {
+  const panel = el("alerts-panel");
   state.alertsOpen = open;
-  el("alerts-panel").hidden = !open;
+  panel.hidden = !open;
   el("alerts-toggle").setAttribute("aria-expanded", String(open));
   if (open) {
+    focusBeforeAlerts = document.activeElement;
     loadAlertSummary();
     setAlertSection(state.alertSection);
-    el("alerts-panel").scrollIntoView({ behavior: "smooth", block: "start" });
-  } else if (alertEventsAbortController) {
-    alertEventsAbortController.abort();
+    panel.focus({ preventScroll: true });
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  } else {
+    if (alertEventsAbortController) alertEventsAbortController.abort();
+    const restore = focusBeforeAlerts || el("alerts-toggle");
+    if (restore && typeof restore.focus === "function") restore.focus();
+    focusBeforeAlerts = null;
   }
+}
+/* Arrow-key navigation for segmented controls, with a roving tabindex so the
+   whole group is one tab stop. */
+function initSegGroup(group) {
+  const buttons = [...group.querySelectorAll("button")];
+  if (!buttons.length) return;
+  buttons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.classList.contains("active")));
+    button.tabIndex = button.classList.contains("active") ? 0 : -1;
+  });
+  group.addEventListener("keydown", (event) => {
+    const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    if (!keys.includes(event.key)) return;
+    const items = [...group.querySelectorAll("button")].filter(
+      (button) => !button.disabled,
+    );
+    const current = items.indexOf(document.activeElement);
+    if (current === -1) return;
+    event.preventDefault();
+    let next = current;
+    if (event.key === "ArrowLeft") next = (current - 1 + items.length) % items.length;
+    if (event.key === "ArrowRight") next = (current + 1) % items.length;
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = items.length - 1;
+    items.forEach((item, index) => {
+      item.tabIndex = index === next ? 0 : -1;
+    });
+    items[next].focus();
+    items[next].click();
+  });
+}
+function syncSegGroup(group) {
+  group.querySelectorAll("button").forEach((button) => {
+    const active = button.classList.contains("active");
+    button.setAttribute("aria-pressed", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
 }
 async function acknowledgeAlert(eventId) {
   try {
@@ -211,7 +313,7 @@ async function acknowledgeAlert(eventId) {
     });
     await Promise.all([loadAlertSummary(), loadAlertEvents()]);
   } catch (err) {
-    toast(err.message, "error");
+    toast(describeError(err), "error");
   }
 }
 async function acknowledgeAllAlerts() {
@@ -223,7 +325,7 @@ async function acknowledgeAllAlerts() {
     toast(`Marked ${result.acknowledged} alert(s) as read`);
     await Promise.all([loadAlertSummary(), loadAlertEvents()]);
   } catch (err) {
-    toast(err.message, "error");
+    toast(describeError(err), "error");
   }
 }
 function startAlertPolling() {
@@ -280,18 +382,21 @@ async function loadAlertRules() {
   if (!state.alertsOpen || state.alertSection !== "rules") return;
   if (alertRulesAbortController) alertRulesAbortController.abort();
   alertRulesAbortController = new AbortController();
-  el("alert-rules").innerHTML =
-    '<div class="empty"><span class="spinner"></span> Loading rules…</div>';
+  const target = el("alert-rules");
+  setRegionState(target, "loading", "Loading rules…");
   try {
     const payload = await fetchJSON(
       `${API}/alerts/rules?limit=100`,
       alertRulesAbortController.signal,
     );
     renderAlertRules(payload);
+    setBusy(target, false);
   } catch (err) {
     if (err.name === "AbortError") return;
-    el("alert-rules").innerHTML =
-      `<div class="empty">Failed to load rules.<div class="hint">${escapeHtml(err.message)}</div></div>`;
+    setRegionState(target, "error", "Failed to load rules.", {
+      hint: describeError(err),
+      retry: loadAlertRules,
+    });
   }
 }
 async function loadAlertRuleRepositories() {
@@ -310,7 +415,7 @@ async function loadAlertRuleRepositories() {
   } catch (err) {
     select.innerHTML = '<option value="">Repositories unavailable</option>';
     el("alert-rule-submit").disabled = true;
-    toast(`Alert rules: ${err.message}`, "warn");
+    toast(`Alert rules: ${describeError(err)}`, "warn");
   }
 }
 function syncAlertRuleFields() {
@@ -341,7 +446,7 @@ async function createAlertRule(event) {
     syncAlertRuleFields();
     await Promise.all([loadAlertRules(), loadAlertSummary()]);
   } catch (err) {
-    toast(err.message, "error");
+    toast(describeError(err), "error");
   }
 }
 async function changeAlertRule(ruleId, action, currentlyEnabled) {
@@ -361,7 +466,7 @@ async function changeAlertRule(ruleId, action, currentlyEnabled) {
     }
     await Promise.all([loadAlertRules(), loadAlertSummary()]);
   } catch (err) {
-    toast(err.message, "error");
+    toast(describeError(err), "error");
   }
 }
 function setAlertSection(section) {
@@ -374,6 +479,7 @@ function setAlertSection(section) {
     .forEach((button) => {
       button.classList.toggle("active", button.dataset.section === section);
     });
+  syncSegGroup(el("alert-section"));
   if (section === "rules") {
     loadAlertRuleRepositories();
     loadAlertRules();
@@ -392,32 +498,43 @@ function renderReposTable(payload) {
       state.trackingStatus !== "tracked";
     if (filtered) {
       wrap.innerHTML =
-        '<div class="empty">Nothing matches your filters.' +
-        '<div class="hint">Try a different language or search term.</div></div>';
+        '<div class="empty" role="status">Nothing matches your filters.' +
+        '<div class="hint">Try a different language or search term, ' +
+        'or clear the filters to see every repository.</div></div>';
+      setBusy(wrap, false);
     } else {
       el("risers-section").style.display = "none";
       wrap.innerHTML =
-        '<div class="empty">No repositories tracked yet.' +
-        '<div class="hint">Run <code>radar top --save</code> on the server, then refresh.</div></div>';
+        '<div class="empty" role="status">No repositories tracked yet.' +
+        '<div class="hint">Run <code>radar top --save</code> on the server, ' +
+        'or track one with the form above, then refresh.</div></div>';
+      setBusy(wrap, false);
       emptyChart("Select a repository to see its star history");
     }
     return;
   }
   el("risers-section").style.display = "";
+  setBusy(wrap, false);
   const arrow = (key) =>
     state.sort === key
       ? '<span class="arrow">↓</span>'
       : '<span class="arrow">↕</span>';
+  const ariaSort = (key) =>
+    state.sort === key ? (key === "name" ? "ascending" : "descending") : "none";
   const table = document.createElement("table");
   table.innerHTML = `
     <thead>
       <tr>
-        <th class="cmp-col" title="Pick two or more to compare">⇄</th>
-        <th class="sortable" data-sort="name">Repository ${arrow("name")}</th>
+        <th class="cmp-col" title="Pick two or more to compare"><span class="sr-only">Compare</span>⇄</th>
+        <th class="sortable" data-sort="name" aria-sort="${ariaSort("name")}">
+          <button type="button" class="th-sort">Repository ${arrow("name")}<span class="sr-only">, sort by name</span></button>
+        </th>
         <th>Language</th>
         <th>Status</th>
         <th>Label</th>
-        <th class="sortable num" data-sort="stars">Stars ${arrow("stars")}</th>
+        <th class="sortable num" data-sort="stars" aria-sort="${ariaSort("stars")}">
+          <button type="button" class="th-sort">Stars ${arrow("stars")}<span class="sr-only">, sort by stars</span></button>
+        </th>
         <th class="num">Forks</th>
         <th>Actions</th>
       </tr>
@@ -430,17 +547,26 @@ function renderReposTable(payload) {
             ? `<span class="mini-velocity" title="${vel.stars_per_day} stars/day over ${state.riserWindow}d">+${vel.stars_per_day}/d</span>`
             : "";
           return `
-        <tr class="repo-row" data-full-name="${escapeHtml(repo.full_name)}">
+        <tr class="repo-row" data-full-name="${escapeHtml(repo.full_name)}"
+            tabindex="0" aria-label="Repository ${escapeHtml(repo.full_name)}">
           <td class="cmp-col">
             <input type="checkbox" class="cmp-box"
               data-full-name="${escapeHtml(repo.full_name)}"
+              aria-label="Compare ${escapeHtml(repo.full_name)}"
               ${state.compare.has(repo.full_name) ? "checked" : ""} />
           </td>
           <td>${escapeHtml(repo.full_name)} ${velBadge}</td>
           <td>${repo.language ? `<span class="lang-badge">${escapeHtml(repo.language)}</span>` : "—"}</td>
           <td>
-            <span class="tracking-badge ${escapeHtml(repo.tracking_status || "stale")}"
-              title="${escapeHtml(repo.last_snapshot_error || "")}">${escapeHtml(repo.tracking_status || "stale")}</span>
+            <span
+              class="tracking-badge ${escapeHtml(repo.tracking_status || "stale")}"
+              title="${escapeHtml(repo.last_snapshot_error || "")}"
+              aria-label="Tracking status: ${escapeHtml(repo.tracking_status || "stale")}${
+                repo.last_snapshot_error
+                  ? `. Last error: ${escapeHtml(repo.last_snapshot_error)}`
+                  : ""
+              }"
+            >${escapeHtml(repo.tracking_status || "stale")}</span>
           </td>
           <td>${repo.tracking_label ? escapeHtml(repo.tracking_label) : "—"}</td>
           <td class="num">${formatNumber(repo.stargazers_count)}</td>
@@ -468,10 +594,18 @@ function renderReposTable(payload) {
       state.sort = th.dataset.sort;
       loadRepos();
     });
+    const button = th.querySelector("button.th-sort");
+    if (button) button.addEventListener("click", (event) => event.stopPropagation());
   });
   table.querySelectorAll("tr.repo-row").forEach((row) => {
     row.addEventListener("click", () => {
       selectRepo(row.dataset.fullName);
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectRepo(row.dataset.fullName);
+      }
     });
   });
   table.querySelectorAll("input.cmp-box").forEach((box) => {
@@ -490,6 +624,14 @@ function renderReposTable(payload) {
 }
 async function changeRepositoryTracking(fullName, action) {
   const [owner, name] = fullName.split("/");
+  if (
+    action === "untrack" &&
+    !window.confirm(
+      `Stop tracking ${fullName}?\n\nIts history stays in the database and can be restored by tracking the repository again.`,
+    )
+  ) {
+    return;
+  }
   try {
     if (action === "refresh") {
       await sendJSON(
@@ -518,10 +660,11 @@ async function changeRepositoryTracking(fullName, action) {
       );
       toast(`${action === "pause" ? "Paused" : "Resumed"} ${fullName}`);
     }
+    announce(`${action} ${fullName} finished`);
     await loadRepos();
     if (state.selectedRepo === fullName) await selectRepo(fullName);
   } catch (err) {
-    toast(err.message, "error");
+    toast(describeError(err), "error");
   }
 }
 async function trackRepositoryFromForm(event) {
@@ -542,14 +685,14 @@ async function trackRepositoryFromForm(event) {
     el("track-repository").value = "";
     el("track-label").value = "";
     toast(`Tracking ${fullName}`);
+    announce(`Now tracking ${fullName}`);
     await loadRepos();
   } catch (err) {
-    toast(err.message, "error");
+    toast(describeError(err), "error");
   }
 }
 function showTableSpinner() {
-  el("repos-table-wrap").innerHTML =
-    '<div class="empty"><span class="spinner"></span> Loading repositories…</div>';
+  setRegionState(el("repos-table-wrap"), "loading", "Loading repositories…");
 }
 let reposAbortController = null;
 async function loadRepos() {
@@ -583,9 +726,11 @@ async function loadRepos() {
     }
   } catch (err) {
     if (err.name === "AbortError") return;
-    el("repos-table-wrap").innerHTML =
-      `<div class="empty">Failed to load repositories.<div class="hint">${escapeHtml(err.message)}</div></div>`;
-    toast(err.message, "error");
+    setRegionState(el("repos-table-wrap"), "error", "Failed to load repositories.", {
+      hint: describeError(err),
+      retry: loadRepos,
+    });
+    toast(describeError(err), "error");
   }
 }
 /* ---------- repo detail + chart ---------- */
@@ -618,7 +763,7 @@ async function selectRepo(fullName) {
     state.bursts = [];
     state.activeBurst = false;
     el("chart-sub").textContent = `${fullName} — failed to load history`;
-    toast(err.message, "error");
+    toast(describeError(err), "error");
   }
 }
 function renderChartSubtitle(fullName, latest) {
@@ -691,6 +836,10 @@ function renderCompareBar() {
     return;
   }
   bar.style.display = "";
+  bar.setAttribute(
+    "aria-label",
+    `${state.compare.size} repositories selected for comparison`,
+  );
   bar.innerHTML =
     [...state.compare]
       .map((name) => `<span class="chip">${escapeHtml(name)}</span>`)
@@ -713,8 +862,8 @@ async function renderComparison() {
       `Comparing ${names.length} repositories — ${COMPARE_LABELS[mode]}, last ${payload.window_days} days`;
   } catch (err) {
     emptyChart("Failed to compare repositories");
-    el("chart-sub").textContent = `Comparison failed — ${err.message}`;
-    toast(err.message, "error");
+    el("chart-sub").textContent = `Comparison failed — ${describeError(err)}`;
+    toast(describeError(err), "error");
   }
 }
 function renderChart() {
@@ -724,9 +873,11 @@ function renderChart() {
   }
   if (!state.selectedRepo) {
     emptyChart("Select a repository to see its star history");
+    el("chart-notice").textContent = "";
     return;
   }
   const points = state.series ? state.series.points : [];
+  renderChartIssues();
   renderSeriesChart(state.selectedRepo, points, {
     mode: state.chartMode,
     smooth: state.smooth,
@@ -739,6 +890,7 @@ function setChartMode(mode) {
   document.querySelectorAll("#chart-mode button").forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === mode);
   });
+  syncSegGroup(el("chart-mode"));
   syncToolbar();
   renderChart();
 }
@@ -766,7 +918,8 @@ async function loadVelocity(fullName) {
     return await fetchJSON(
       `${API}/analytics/velocity/${encodeURIComponent(owner)}/${encodeURIComponent(name)}?windows=7,30,90`,
     );
-  } catch (_) {
+  } catch (err) {
+    noteChartIssue(`velocity unavailable (${describeError(err)})`);
     return null;
   }
 }
@@ -776,9 +929,20 @@ async function loadBursts(fullName, days = 90) {
     return await fetchJSON(
       `${API}/analytics/bursts/${encodeURIComponent(owner)}/${encodeURIComponent(name)}?days=${days}`,
     );
-  } catch (_) {
+  } catch (err) {
+    noteChartIssue(`burst detection unavailable (${describeError(err)})`);
     return null;
   }
+}
+let chartIssues = [];
+function noteChartIssue(message) {
+  if (!chartIssues.includes(message)) chartIssues.push(message);
+}
+function renderChartIssues() {
+  const notice = el("chart-notice");
+  if (!notice) return;
+  notice.textContent = chartIssues.join(" · ");
+  chartIssues = [];
 }
 function renderVelocityBadges(velocity) {
   const box = el("velocity-badges");
@@ -851,7 +1015,9 @@ async function loadLanguages() {
         .join("");
     if (state.language) select.value = state.language;
   } catch (err) {
-    toast(`Languages: ${err.message}`, "warn");
+    const select = el("language-filter");
+    select.innerHTML = '<option value="">Languages unavailable</option>';
+    toast(`Languages: ${describeError(err)}`, "warn");
   }
 }
 /* ---------- leaderboard ---------- */
@@ -869,8 +1035,10 @@ async function loadRisers() {
     );
     const risers = payload.items.slice(0, 8);
     if (!risers.length) {
+      setBusy(grid, false);
       grid.innerHTML =
-        '<div class="empty">Not enough data yet — run <code>radar snapshot</code> for a few days.</div>';
+        '<div class="empty" role="status">Not enough data yet.' +
+        '<div class="hint">Run <code>radar snapshot</code> for a few days to see risers.</div></div>';
       return;
     }
     const fastest = Math.max(...risers.map((repo) => repo.stars_per_day));
@@ -880,15 +1048,17 @@ async function loadRisers() {
           ? Math.round((repo.stars_per_day / fastest) * 100)
           : 0;
         return `
-        <div class="riser-card" data-full-name="${escapeHtml(repo.full_name)}">
-          <div class="rank">#${repo.rank}</div>
-          <div class="name">${escapeHtml(repo.full_name)}</div>
-          <div class="delta">+${formatNumber(repo.stars_per_day)} stars/day</div>
-          <div class="sub">+${formatNumber(repo.stars_gained)} in ${state.riserWindow}d · ★ ${formatNumber(repo.stars)}</div>
-          <div class="bar"><div class="bar-fill" style="width:${share}%"></div></div>
-        </div>`;
+        <button type="button" class="riser-card" data-full-name="${escapeHtml(repo.full_name)}"
+          aria-label="Rank ${repo.rank}: ${escapeHtml(repo.full_name)}, plus ${repo.stars_per_day} stars per day">
+          <span class="rank">#${repo.rank}</span>
+          <span class="name">${escapeHtml(repo.full_name)}</span>
+          <span class="delta">+${formatNumber(repo.stars_per_day)} stars/day</span>
+          <span class="sub">+${formatNumber(repo.stars_gained)} in ${state.riserWindow}d · ★ ${formatNumber(repo.stars)}</span>
+          <span class="bar"><span class="bar-fill" style="width:${share}%"></span></span>
+        </button>`;
       })
       .join("");
+    setBusy(grid, false);
     grid.querySelectorAll(".riser-card").forEach((card) => {
       card.addEventListener("click", () => {
         state.search = "";
@@ -899,21 +1069,58 @@ async function loadRisers() {
     });
   } catch (err) {
     state.velocityMap.clear();
-    grid.innerHTML = `<div class="empty">Failed to load risers.<div class="hint">${escapeHtml(err.message)}</div></div>`;
-    toast(err.message, "error");
+    setRegionState(grid, "error", "Failed to load risers.", {
+      hint: describeError(err),
+      retry: loadLeaderboardAndRepos,
+    });
+    toast(describeError(err), "error");
   }
 }
 function loadLeaderboardAndRepos() {
   return loadRisers().finally(loadRepos);
 }
+async function refreshAll() {
+  const button = el("refresh-btn");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  announce("Refreshing dashboard");
+  try {
+    await Promise.all([
+      loadLeaderboardAndRepos(),
+      loadLanguages(),
+      loadAlertSummary(),
+      refreshStatusBadge(),
+    ]);
+    if (state.alertsOpen) await loadAlertEvents();
+    announce("Dashboard refreshed");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
 /* ---------- theme ---------- */
+function storedTheme() {
+  const saved = localStorage.getItem("radar-theme");
+  if (saved === "light" || saved === "dark") return saved;
+  return window.matchMedia("(prefers-color-scheme: light)").matches
+    ? "light"
+    : "dark";
+}
 function applyTheme() {
+  state.theme = storedTheme();
   document.body.classList.toggle("light", state.theme === "light");
-  el("theme-toggle").textContent = state.theme === "light" ? "☀️" : "🌙";
-  localStorage.setItem("radar-theme", state.theme);
+  const button = el("theme-toggle");
+  button.textContent = state.theme === "light" ? "☀️" : "🌙";
+  button.setAttribute(
+    "aria-label",
+    state.theme === "light" ? "Switch to dark theme" : "Switch to light theme",
+  );
 }
 function toggleTheme() {
-  state.theme = state.theme === "light" ? "dark" : "light";
+  localStorage.setItem(
+    "radar-theme",
+    document.body.classList.contains("light") ? "dark" : "light",
+  );
   applyTheme();
   refreshChartColors();
   renderChart();
@@ -951,6 +1158,7 @@ function init() {
     el("alert-view")
       .querySelectorAll("button")
       .forEach((item) => item.classList.toggle("active", item === button));
+    syncSegGroup(el("alert-view"));
     loadAlertEvents();
   });
   el("alert-kind-filter").addEventListener("change", (event) => {
@@ -1034,7 +1242,15 @@ function init() {
     document.querySelectorAll("#riser-window button").forEach((item) => {
       item.classList.toggle("active", item === button);
     });
+    syncSegGroup(el("riser-window"));
     loadLeaderboardAndRepos();
+  });
+  ["alert-section", "alert-view", "chart-mode", "riser-window"].forEach((id) => {
+    const group = el(id);
+    if (group) initSegGroup(group);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.alertsOpen) setAlertsOpen(false);
   });
   let debounceTimer = null;
   el("theme-toggle").addEventListener("click", toggleTheme);
@@ -1043,10 +1259,7 @@ function init() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(loadRepos, 300);
   });
-  el("refresh-btn").addEventListener("click", () => {
-    loadLeaderboardAndRepos();
-    loadAlertSummary();
-  });
+  el("refresh-btn").addEventListener("click", refreshAll);
   refreshChartColors();
   refreshStatusBadge();
   loadLanguages();
