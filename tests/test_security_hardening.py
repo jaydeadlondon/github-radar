@@ -213,3 +213,26 @@ def test_dashboard_assets_are_offline() -> None:
 def test_redaction_keeps_timestamps_readable() -> None:
     stamp = datetime.now(UTC).isoformat()
     assert stamp in redact_secret(f"failed at {stamp}")
+
+
+def test_delivery_errors_cannot_carry_credentials() -> None:
+    """Stored delivery errors are built from safe parts and then redacted."""
+
+    import httpx
+
+    from alerts.webhook import _delivery_error
+
+    request = httpx.Request(
+        "POST", "https://hooks.example.com/services/ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    )
+    transport_error = httpx.ConnectError("unreachable", request=request)
+    message = _delivery_error(transport_error)
+    assert "ghp_" not in message
+    assert "hooks.example.com" not in message
+    assert message.startswith("ConnectError")
+
+    response = httpx.Response(503, request=request)
+    status_error = httpx.HTTPStatusError(
+        "server error", request=request, response=response
+    )
+    assert _delivery_error(status_error) == "HTTP 503"
