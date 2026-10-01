@@ -130,7 +130,7 @@ async def test_network_error_does_not_store_secret_url(db_session) -> None:
     delivered = await deliver_event(
         db_session,
         event,
-        webhook_url="https://user:secret-token@hooks.example.test/radar",
+        webhook_url="https://hooks.example.test/radar",
         transport=httpx.MockTransport(handler),
     )
 
@@ -138,3 +138,24 @@ async def test_network_error_does_not_store_secret_url(db_session) -> None:
     assert event.delivery_status == "failed"
     assert event.delivery_error == "ConnectError: webhook request failed"
     assert "secret-token" not in event.delivery_error
+
+
+async def test_credentials_in_url_are_rejected_before_any_request(db_session) -> None:
+    event = _event(datetime(2026, 9, 16, 12, tzinfo=UTC))
+    event.id = None
+    event.rule_id = None
+    event.repo_id = None
+    db_session.add(event)
+    await db_session.flush()
+
+    delivered = await deliver_event(
+        db_session,
+        event,
+        webhook_url="https://user:secret-token@hooks.example.test/radar",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200)),
+    )
+
+    assert delivered is False
+    assert event.delivery_status == "failed"
+    assert "secret-token" not in (event.delivery_error or "")
+    assert "secret-token" not in (event.repository_full_name or "")
