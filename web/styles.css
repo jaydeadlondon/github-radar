@@ -837,3 +837,158 @@ body.light .mini-velocity {
 body.light .burst-segment {
   background: rgba(207, 34, 46, 0.45);
 }
+
+/* Accessibility helpers */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 10px 16px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 2px solid var(--accent);
+  border-radius: 6px;
+}
+.skip-link:focus {
+  left: 12px;
+  top: 12px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+main:focus {
+  outline: none;
+}
+.empty[role="alert"] {
+  color: var(--danger, #f85149);
+}
+.empty .btn {
+  margin-top: 12px;
+}
+th.sortable button.th-sort {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+th.sortable button.th-sort:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+th[aria-sort="ascending"] button.th-sort::after,
+th[aria-sort="descending"] button.th-sort::after {
+  font-size: 0.7em;
+}
+tr.repo-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* Small phones */
+@media (max-width: 560px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .topbar h1 {
+    font-size: 1rem;
+  }
+  .filters {
+    position: static;
+  }
+  .filters input,
+  .filters select,
+  .btn {
+    min-height: 44px;
+  }
+  .seg button,
+  .btn.small {
+    min-height: 40px;
+  }
+  .cmd {
+    display: none;
+  }
+  .toast {
+    width: 100%;
+  }
+}
+
+/* Riser cards are buttons: keep the card look, gain keyboard support. */
+.riser-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.riser-card .rank,
+.riser-card .name,
+.riser-card .delta,
+.riser-card .sub {
+  display: block;
+}
+.riser-card .bar {
+  display: block;
+}
+.riser-card .bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.riser-card:focus-visible,
+.repo-row:focus-visible,
+.alert-event:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* Loading / error / empty panels share the same rhythm. */
+.empty.loading {
+  color: var(--text-muted);
+}
+.empty.error {
+  color: var(--red);
+}
+.empty .hint code {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.badge-warn {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+.chart-title {
+  font-size: 1rem;
+  margin: 0 0 4px;
+}
+#chart-notice:empty {
+  display: none;
+}
