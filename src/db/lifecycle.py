@@ -151,6 +151,20 @@ def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
     return connection
 
 
+def _remove_sidecars(path: Path) -> None:
+    """Delete SQLite ``-wal``/``-shm``/``-journal`` companions of a file.
+
+    Backups and restores must leave exactly one self-contained file behind;
+    opening a WAL-mode database creates these companions and they would
+    otherwise sit next to the copy (and be shipped along with it).
+    """
+
+    for suffix in ("-wal", "-shm", "-journal"):
+        companion = path.with_name(path.name + suffix)
+        if companion.exists():
+            companion.unlink(missing_ok=True)
+
+
 def _table_names(connection: sqlite3.Connection) -> set[str]:
     rows = connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
     return {row["name"] for row in rows}
@@ -308,7 +322,11 @@ def backup_database(destination: str | Path | None = None) -> BackupResult:
     source = Path(state.location)
 
     target = Path(destination) if destination is not None else Path(_default_backup_name())
-    if target.is_dir():
+    if target.is_dir() or (destination is not None and target.suffix == ""):
+        # A destination without a file extension is treated as a directory, so
+        # `radar backup ./backups` does not silently create a file named
+        # "backups".
+        target.mkdir(parents=True, exist_ok=True)
         target = target / _default_backup_name()
     if target.resolve() == source.resolve():
         raise UsageError("backup destination must differ from the source database")
@@ -325,6 +343,10 @@ def backup_database(destination: str | Path | None = None) -> BackupResult:
             destination_connection = sqlite3.connect(temporary)
             try:
                 source_connection.backup(destination_connection)
+                # WAL mode travels with the database file, so switch the copy
+                # back to the default journal: the backup then stays a single
+                # file that opens without -wal/-shm companions.
+                destination_connection.execute("PRAGMA journal_mode=DELETE")
             finally:
                 destination_connection.close()
         _validate_sqlite_file(temporary, expected_tables=REQUIRED_TABLES)
@@ -332,9 +354,10 @@ def backup_database(destination: str | Path | None = None) -> BackupResult:
     except sqlite3.Error as exc:
         raise DatabaseUnavailableError(f"backup failed: {exc}") from exc
     finally:
-        if temporary.exists():
-            temporary.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
+        _remove_sidecars(temporary)
 
+    _remove_sidecars(target)
     with _connect(target, readonly=True) as connection:
         revision = _revision(connection)
         repositories = _count(connection, "repositories") or 0
@@ -386,6 +409,8 @@ def restore_database(
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
+        _remove_sidecars(temporary)
+    _remove_sidecars(target)
 
     with _connect(target, readonly=True) as connection:
         revision = _revision(connection)
