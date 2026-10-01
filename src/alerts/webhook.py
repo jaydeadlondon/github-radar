@@ -15,7 +15,7 @@ from config import settings
 from db.alerts import set_delivery_result
 from db.models import AlertDelivery, AlertEvent, NotificationEndpoint
 from observability import metrics
-from security import UnsafeURL, validate_outbound_url
+from security import UnsafeURL, redact_secret, validate_outbound_url
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +52,19 @@ def build_provider_payload(event: AlertEvent, provider: str) -> dict[str, Any]:
 
 
 def _delivery_error(exc: httpx.HTTPError) -> str:
+    """Human-readable failure text that never carries credentials.
+
+    Transport errors can embed the request URL, which for a webhook may contain
+    a token in the path or query string.  Only the exception class and status
+    code are kept, and the result is passed through :func:`redact_secret` as a
+    second line of defence before it is stored or logged.
+    """
+
     if isinstance(exc, httpx.HTTPStatusError):
-        return f"HTTP {exc.response.status_code}"
-    return f"{type(exc).__name__}: webhook request failed"
+        message = f"HTTP {exc.response.status_code}"
+    else:
+        message = f"{type(exc).__name__}: webhook request failed"
+    return redact_secret(message, max_length=200)
 
 
 def _retryable(exc: httpx.HTTPError) -> bool:
