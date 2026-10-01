@@ -54,14 +54,20 @@ def parse_output(value: str) -> str:
     return normalized
 
 
+def iso_utc(value: datetime) -> str:
+    """RFC 3339 UTC timestamp; matches the REST API (``...Z``)."""
+
+    moment = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
 def to_jsonable(value: Any) -> Any:
     """Convert domain values into JSON-safe primitives."""
 
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, datetime):
-        moment = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-        return moment.astimezone(UTC).isoformat()
+        return iso_utc(value)
     if isinstance(value, date):
         return value.isoformat()
     if is_dataclass(value) and not isinstance(value, type):

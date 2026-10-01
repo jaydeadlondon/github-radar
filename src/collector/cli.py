@@ -165,10 +165,11 @@ def main(
     """GitHub Radar — track rising stars on GitHub."""
 
     global console, err_console
-    if no_color:
-        console = Console(no_color=True, highlight=False)
-        err_console = Console(stderr=True, no_color=True, highlight=False)
+    # Reset per invocation so flags never leak between runs in the same process.
+    console = Console(no_color=no_color, highlight=False)
+    err_console = Console(stderr=True, no_color=no_color, highlight=False)
     _state["quiet"] = quiet
+    _state["output"] = None
     if output is not None:
         try:
             _state["output"] = parse_output(output)
