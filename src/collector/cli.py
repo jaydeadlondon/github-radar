@@ -9,9 +9,22 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
+from cli_output import (
+    Column,
+    emit_document,
+    emit_rows,
+    parse_output,
+    to_jsonable,
+)
 from config import ConfigurationError
+from exit_codes import (
+    ConfigurationFailure,
+    DatabaseUnavailableError,
+    ExitCode,
+    RadarError,
+    UsageError,
+)
 from github.client import GitHubClient
 from github.errors import GitHubError
 from github.models import RepoSummary
@@ -24,6 +37,8 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+err_console = Console(stderr=True)
+_state: dict[str, object] = {"quiet": False, "output": None}
 alerts_app = typer.Typer(
     help="Manage alert rules and the alert inbox.", no_args_is_help=True
 )
@@ -38,15 +53,109 @@ notifications_app = typer.Typer(
 app.add_typer(notifications_app, name="notifications")
 
 
+def _fail(message: str, code: ExitCode = ExitCode.ERROR) -> None:
+    err_console.print(f"[red]Error:[/red] {message}")
+    raise typer.Exit(code)
+
+
+def _info(message: str) -> None:
+    if not _state["quiet"]:
+        console.print(message)
+
+
+def _resolve_output(local: str | None) -> str:
+    value = local or _state["output"] or "table"
+    try:
+        return parse_output(str(value))
+    except UsageError as exc:
+        _fail(str(exc), exc.exit_code)
+
+
+CLI_FAILURES = (
+    RadarError,
+    ConfigurationError,
+    GitHubError,
+    TrackingError,
+)
+
+
+def _translate_error(exc: BaseException) -> None:
+    if isinstance(exc, (ConfigurationFailure, ConfigurationError)):
+        _fail(str(exc), ExitCode.CONFIG)
+    elif isinstance(exc, DatabaseUnavailableError):
+        _fail(str(exc), ExitCode.DATABASE)
+    elif isinstance(exc, RadarError):
+        _fail(str(exc), exc.exit_code)
+    else:
+        _fail(str(exc), ExitCode.ERROR)
+
+
+def _run_sync(fn: Callable[[], None]) -> None:
+    try:
+        fn()
+    except CLI_FAILURES as exc:
+        _translate_error(exc)
+
+
 def _run_async(fn: Callable[[], Awaitable[None]]) -> None:
     async def _wrapper() -> None:
         try:
             await fn()
-        except (ConfigurationError, GitHubError, TrackingError) as exc:
-            console.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(1) from exc
+        except CLI_FAILURES as exc:
+            _translate_error(exc)
 
     asyncio.run(_wrapper())
+
+
+def _require_database() -> None:
+    from db.lifecycle import require_database
+
+    try:
+        require_database()
+    except CLI_FAILURES as exc:
+        _translate_error(exc)
+
+
+def _abort(message: str = "Aborted.") -> None:
+    err_console.print(f"[yellow]{message}[/yellow]")
+    raise typer.Exit(ExitCode.INTERRUPTED)
+
+
+def _warn_missing_token() -> None:
+    from config import settings
+
+    if not settings.github_token:
+        err_console.print(
+            "[yellow]Warning:[/yellow] RADAR_GITHUB_TOKEN is not configured; "
+            "GitHub requests run anonymously and are limited to 60 requests/hour."
+        )
+
+
+@app.callback()
+def main(
+    no_color: bool = typer.Option(
+        False, "--no-color", help="Disable ANSI colors and styling."
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress status messages (data output is kept)."
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Default output format for read commands: table, json or csv.",
+    ),
+) -> None:
+    global console, err_console
+    if no_color:
+        console = Console(no_color=True, highlight=False)
+        err_console = Console(stderr=True, no_color=True, highlight=False)
+    _state["quiet"] = quiet
+    if output is not None:
+        try:
+            _state["output"] = parse_output(output)
+        except UsageError as exc:
+            _fail(str(exc), exc.exit_code)
 
 
 def _alembic_ini_path() -> Path:
@@ -63,21 +172,58 @@ def _alembic_ini_path() -> Path:
 
 
 @app.command()
-def version() -> None:
-    console.print(f"github-radar {__version__}")
+def version(
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table or json."
+    ),
+) -> None:
+    resolved = _resolve_output(output)
+    if resolved == "json":
+        emit_document({"name": "github-radar", "version": __version__}, "json")
+    elif resolved == "csv":
+        _fail("`radar version` supports table or json output only", ExitCode.USAGE)
+    else:
+        console.print(f"github-radar {__version__}")
 
 
 @app.command("init-db")
-def init_db() -> None:
-    async def _impl() -> None:
+def init_db(
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table or json."
+    ),
+) -> None:
+    resolved = _resolve_output(output)
+
+    async def _create_schema() -> None:
         from db.base import engine
         from db.models import Base
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        console.print("[green]Database initialized.[/green]")
+        await engine.dispose()
 
-    _run_async(_impl)
+    _run_async(_create_schema)
+
+    from alembic.config import Config
+
+    from alembic import command
+    from db.lifecycle import database_state
+
+    command.stamp(Config(str(_alembic_ini_path())), "head")
+    state = database_state()
+    payload = {
+        "status": "initialized",
+        "location": state.location,
+        "revision": state.revision,
+        "repository_count": state.repository_count,
+    }
+    if resolved == "json":
+        emit_document(payload, "json")
+    else:
+        _info(
+            f"[green]Database initialized at {state.location} "
+            f"(revision {state.revision}).[/green]"
+        )
 
 
 @app.command()
@@ -85,14 +231,512 @@ def migrate(
     revision: str = typer.Option(
         "head", "--revision", help="Alembic revision to apply."
     ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Report the migration state without changing the database.",
+    ),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table or json."
+    ),
 ) -> None:
+    resolved = _resolve_output(output)
+
+    from db.lifecycle import database_state, require_database
+
+    state = database_state()
+    if check:
+        payload = {
+            "location": state.location,
+            "exists": state.exists,
+            "schema_present": state.schema_present,
+            "current_revision": state.revision,
+            "head_revision": state.head_revision,
+            "up_to_date": state.migrations_current,
+        }
+        if resolved == "json":
+            emit_document(payload, "json")
+        else:
+            emit_rows(
+                [
+                    {
+                        "location": state.location,
+                        "schema_present": state.schema_present,
+                        "current_revision": state.revision,
+                        "head_revision": state.head_revision,
+                        "up_to_date": state.migrations_current,
+                    }
+                ],
+                (
+                    Column("location", "Database"),
+                    Column("schema_present", "Schema"),
+                    Column("current_revision", "Current revision"),
+                    Column("head_revision", "Head revision"),
+                    Column("up_to_date", "Up to date"),
+                ),
+                "table",
+                title="Migration state",
+                empty_message="No database state available.",
+                console=console,
+            )
+        if not state.migrations_current:
+            raise typer.Exit(ExitCode.DATABASE)
+        return
+
+    require_database()
+
     from alembic.config import Config
 
     from alembic import command
 
     alembic_config = Config(str(_alembic_ini_path()))
-    command.upgrade(alembic_config, revision)
-    console.print(f"[green]Database migrated to {revision}.[/green]")
+    try:
+        command.upgrade(alembic_config, revision)
+    except Exception as exc:
+        err_console.print(
+            f"[red]Error:[/red] migration failed: {exc}\n"
+            f"Current revision: {state.revision}. The database was not "
+            f"advanced past the last successful revision; inspect the log, fix the "
+            f"cause and re-run `radar migrate`. Restore from `radar backup` if "
+            f"the schema is inconsistent."
+        )
+        raise typer.Exit(ExitCode.DATABASE) from exc
+    updated = database_state()
+    if resolved == "json":
+        emit_document(
+            {
+                "status": "migrated",
+                "location": updated.location,
+                "revision": updated.revision,
+                "head_revision": updated.head_revision,
+            },
+            "json",
+        )
+    else:
+        _info(
+            f"[green]Database migrated to {revision} "
+            f"(revision {updated.revision}).[/green]"
+        )
+
+
+db_app = typer.Typer(
+    help="Inspect the database, its schema revision and its contents.",
+    no_args_is_help=True,
+)
+app.add_typer(db_app, name="db")
+
+
+def _state_row(state, *, label: str = "database") -> dict[str, object]:
+    return {
+        "location": state.location or state.url,
+        "backend": state.backend,
+        "exists": state.exists,
+        "schema_present": state.schema_present,
+        "revision": state.revision,
+        "head_revision": state.head_revision,
+        "up_to_date": state.migrations_current,
+        "size_bytes": state.size_bytes,
+        "repositories": state.repository_count,
+        "snapshots": state.snapshot_count,
+        "alert_events": state.alert_event_count,
+        "detail": state.detail,
+    }
+
+
+_DB_COLUMNS: tuple[Column, ...] = (
+    Column("location", "Database"),
+    Column("backend", "Backend"),
+    Column("exists", "Exists"),
+    Column("schema_present", "Schema"),
+    Column("revision", "Revision"),
+    Column("head_revision", "Head"),
+    Column("up_to_date", "Up to date"),
+    Column("repositories", "Repositories", align="right"),
+    Column("snapshots", "Snapshots", align="right"),
+    Column("alert_events", "Alert events", align="right"),
+    Column("size_bytes", "Size (bytes)", align="right"),
+    Column("detail", "Notes"),
+)
+_DB_TABLE_KEYS = (
+    "revision",
+    "head_revision",
+    "up_to_date",
+    "repositories",
+    "snapshots",
+    "size_bytes",
+    "location",
+)
+_DB_TABLE_COLUMNS: tuple[Column, ...] = tuple(
+    column for column in _DB_COLUMNS if column.key in _DB_TABLE_KEYS
+)
+_DB_CSV_COLUMNS: tuple[Column, ...] = _DB_COLUMNS
+
+
+@db_app.command("status")
+def db_status(
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
+) -> None:
+    from db.lifecycle import database_state
+
+    resolved = _resolve_output(output)
+    emit_rows(
+        [_state_row(database_state())],
+        _DB_TABLE_COLUMNS if resolved == "table" else _DB_CSV_COLUMNS,
+        resolved,
+        title="Database status",
+        empty_message="No database status available.",
+        console=console,
+    )
+
+
+@app.command()
+def backup(
+    destination: str | None = typer.Argument(
+        None, help="Backup file or directory (default: ./radar-backup-<timestamp>.db)."
+    ),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table or json."
+    ),
+) -> None:
+    def _command() -> None:
+        from db.lifecycle import backup_database
+
+        resolved = _resolve_output(output)
+        result = backup_database(destination)
+        payload = {
+            "status": "backed_up",
+            "source": result.source,
+            "destination": result.destination,
+            "size_bytes": result.size_bytes,
+            "revision": result.revision,
+            "repositories": result.repository_count,
+            "snapshots": result.snapshot_count,
+            "created_at": result.created_at,
+        }
+        if resolved == "json":
+            emit_document(payload, "json")
+        else:
+            _info(
+                f"[green]Backup written to {result.destination} "
+                f"({result.size_bytes} bytes, revision {result.revision}).[/green]"
+            )
+
+    _run_sync(_command)
+
+
+@app.command()
+def restore(
+    source: str = typer.Argument(..., help="Backup file created by `radar backup`."),
+    destination: str | None = typer.Option(
+        None, "--destination", help="Target database path (default: configured URL)."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Replace an existing database without prompting."
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+    no_backup: bool = typer.Option(
+        False,
+        "--no-safety-backup",
+        help="Do not keep a copy of the database that is being replaced.",
+    ),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table or json."
+    ),
+) -> None:
+    def _command() -> None:
+        from db.lifecycle import database_state, restore_database
+
+        resolved = _resolve_output(output)
+        state = database_state()
+        target = destination or state.location or state.url
+        if state.exists and not force:
+            _fail(
+                f"destination database already exists: {target} (pass --force to replace it)",
+                ExitCode.USAGE,
+            )
+        if (
+            state.exists
+            and not yes
+            and not _confirm(f"Replace the database at {target} with {source}?")
+        ):
+            _abort()
+        result = restore_database(
+            source,
+            destination,
+            force=True,
+            safety_backup=not no_backup,
+        )
+        payload = {
+            "status": "restored",
+            "source": result.source,
+            "destination": result.destination,
+            "safety_backup": result.safety_backup,
+            "revision": result.revision,
+            "repositories": result.repository_count,
+            "snapshots": result.snapshot_count,
+        }
+        if resolved == "json":
+            emit_document(payload, "json")
+        else:
+            message = (
+                f"[green]Restored {result.destination} from {result.source}.[/green]"
+            )
+            if result.safety_backup:
+                message += f" Previous database kept at {result.safety_backup}."
+            _info(message)
+
+    _run_sync(_command)
+
+
+@app.command()
+def prune(
+    keep_days: int = typer.Option(
+        400, "--keep-days", min=1, help="Keep snapshots newer than this many days."
+    ),
+    keep_min_per_repo: int = typer.Option(
+        1,
+        "--keep-min-per-repo",
+        min=0,
+        help="Always keep the newest N snapshots of every repository.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report what would be deleted without deleting."
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
+) -> None:
+    def _command() -> None:
+        from db.lifecycle import prune_snapshots
+
+        resolved = _resolve_output(output)
+        if not dry_run and not yes:
+            if not _confirm(f"Delete snapshots older than {keep_days} days?"):
+                _abort()
+        result = prune_snapshots(
+            keep_days,
+            keep_min_per_repo=keep_min_per_repo,
+            dry_run=dry_run,
+        )
+        rows = [
+            {
+                "keep_days": result.keep_days,
+                "keep_min_per_repo": result.keep_min_per_repo,
+                "dry_run": result.dry_run,
+                "cutoff": result.cutoff,
+                "snapshots": result.deleted_snapshots,
+                "repositories": result.affected_repositories,
+                "oldest_kept_at": result.oldest_kept_at,
+            }
+        ]
+        emit_rows(
+            rows,
+            (
+                Column("dry_run", "Dry run"),
+                Column("keep_days", "Keep days", align="right"),
+                Column("keep_min_per_repo", "Min per repo", align="right"),
+                Column("cutoff", "Cutoff (UTC)"),
+                Column("snapshots", "Snapshots", align="right"),
+                Column("repositories", "Repositories", align="right"),
+                Column("oldest_kept_at", "Oldest kept (UTC)"),
+            ),
+            resolved,
+            title="Prune plan" if dry_run else "Prune result",
+            empty_message="Nothing to prune.",
+            console=console,
+        )
+        if resolved == "table":
+            verb = "would be deleted" if dry_run else "deleted"
+            _info(
+                f"[green]{result.deleted_snapshots} snapshot(s) {verb} "
+                f"across {result.affected_repositories} repository(-ies).[/green]"
+            )
+
+    _run_sync(_command)
+
+
+@app.command()
+def doctor(
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
+) -> None:
+    def _command() -> None:
+        checks = _run_doctor()
+        resolved = _resolve_output(output)
+        rows = [
+            {"check": name, "status": status, "detail": detail}
+            for name, status, detail in checks
+        ]
+        emit_rows(
+            rows,
+            (
+                Column("check", "Check"),
+                Column("status", "Status"),
+                Column("detail", "Detail"),
+            ),
+            resolved,
+            title="radar doctor",
+            empty_message="No checks ran.",
+            console=console,
+        )
+        failures = [row for row in rows if row["status"] == "error"]
+        if failures:
+            raise typer.Exit(ExitCode.ERROR)
+
+    _run_sync(_command)
+
+
+def _run_doctor() -> list[tuple[str, str, str]]:
+    import sys
+
+    from config import (
+        ConfigurationError,
+        configuration_warnings,
+        validate_runtime_configuration,
+    )
+    from db.lifecycle import database_state
+
+    checks: list[tuple[str, str, str]] = []
+    checks.append(
+        (
+            "python",
+            "ok" if sys.version_info >= (3, 11) else "error",
+            sys.version.split()[0],
+        )
+    )
+
+    try:
+        validate_runtime_configuration()
+        warnings = configuration_warnings()
+        checks.append(
+            (
+                "configuration",
+                "warn" if warnings else "ok",
+                "; ".join(warnings) if warnings else "no warnings",
+            )
+        )
+    except (ConfigurationError, ValueError) as exc:
+        checks.append(("configuration", "error", str(exc)))
+
+    from config import settings
+
+    checks.append(
+        (
+            "github_token",
+            "ok" if settings.github_token else "warn",
+            (
+                "configured"
+                if settings.github_token
+                else "not configured (anonymous rate limits)"
+            ),
+        )
+    )
+
+    state = database_state()
+    if not state.exists:
+        checks.append(
+            (
+                "database",
+                "error",
+                f"not found at {state.location}; run `radar init-db` or `radar migrate`",
+            )
+        )
+    elif not state.schema_present:
+        checks.append(
+            ("database", "error", f"{state.location}: {state.detail or 'no schema'}")
+        )
+    elif not state.migrations_current:
+        checks.append(
+            (
+                "migrations",
+                "warn",
+                f"revision {state.revision} != head {state.head_revision}; run `radar migrate`",
+            )
+        )
+    else:
+        checks.append(
+            ("database", "ok", f"{state.location} (revision {state.revision})")
+        )
+        checks.append(("migrations", "ok", str(state.revision)))
+
+    if state.location:
+        from pathlib import Path
+
+        parent = Path(state.location).parent
+        writable = parent.is_dir() and _can_write(parent)
+        checks.append(
+            (
+                "database_directory",
+                "ok" if writable else "error",
+                f"{parent} is {'writable' if writable else 'not writable'}",
+            )
+        )
+
+    dashboard = _dashboard_directory()
+    checks.append(
+        (
+            "dashboard_assets",
+            "ok" if dashboard else "error",
+            str(dashboard) if dashboard else "web/ directory not found",
+        )
+    )
+
+    if settings.alert_webhook_url:
+        from security import UnsafeURL, validate_webhook_url
+
+        try:
+            validate_webhook_url(settings.alert_webhook_url)
+            checks.append(("webhook_url", "ok", "configured webhook URL is allowed"))
+        except UnsafeURL as exc:
+            checks.append(("webhook_url", "error", str(exc)))
+    else:
+        checks.append(("webhook_url", "ok", "no legacy webhook URL configured"))
+
+    checks.append(
+        (
+            "api_auth",
+            "ok" if settings.api_auth_enabled else "warn",
+            (
+                "enabled"
+                if settings.api_auth_enabled
+                else "disabled (development default)"
+            ),
+        )
+    )
+    return checks
+
+
+def _can_write(path) -> bool:
+    import os
+
+    return os.access(path, os.W_OK)
+
+
+def _dashboard_directory() -> Path | None:
+    from pathlib import Path as _Path
+
+    for candidate in (
+        _Path.cwd() / "web",
+        _Path(__file__).resolve().parents[2] / "web",
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _confirm(prompt: str) -> bool:
+    import sys
+
+    if not sys.stdin.isatty():
+        _fail(
+            f"{prompt} Refusing to continue without --yes in a non-interactive shell.",
+            ExitCode.USAGE,
+        )
+    return typer.confirm(prompt, default=False, abort=False)
 
 
 @app.command()
@@ -127,8 +771,7 @@ def serve(
         try:
             validate_runtime_configuration()
         except ConfigurationError as exc:
-            console.print(f"[red]Unsafe production configuration:[/red] {exc}")
-            raise typer.Exit(2) from exc
+            _fail(f"unsafe production configuration: {exc}", ExitCode.CONFIG)
         configure_logging(
             level=settings.log_level,
             json_logs=settings.log_format.lower() == "json",
@@ -152,29 +795,35 @@ async def _store_repos(repos: list[RepoSummary]) -> int:
 def _require_full_name(full_name: str) -> str:
     value = full_name.strip()
     if value.count("/") != 1 or any(not part for part in value.split("/")):
-        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
-        raise typer.Exit(2)
+        _fail("expected owner/name format, e.g. psf/requests", ExitCode.USAGE)
     return value
 
 
-def _render_tracking_table(rows: list[dict[str, object]], title: str) -> None:
-    table = Table(title=title)
-    table.add_column("Repository")
-    table.add_column("Status")
-    table.add_column("Label")
-    table.add_column("Snapshots", justify="right")
-    table.add_column("Last success")
-    table.add_column("Last error")
-    for row in rows:
-        table.add_row(
-            str(row["repository"]),
-            str(row["status"]),
-            str(row["label"] or "—"),
-            str(row["snapshot_count"]),
-            str(row["last_successful_snapshot_at"] or "—"),
-            str(row["last_snapshot_error"] or "—"),
-        )
-    console.print(table)
+TRACKING_COLUMNS: tuple[Column, ...] = (
+    Column("repository", "Repository"),
+    Column("status", "Status"),
+    Column("label", "Label"),
+    Column("snapshot_count", "Snapshots", align="right"),
+    Column("last_successful_snapshot_at", "Last success (UTC)"),
+    Column("last_snapshot_error", "Last error"),
+)
+
+
+def _emit_tracking_rows(
+    rows: list[dict[str, object]],
+    output: str,
+    *,
+    title: str,
+    empty_message: str,
+) -> None:
+    emit_rows(
+        rows,
+        TRACKING_COLUMNS,
+        output,
+        title=title,
+        empty_message=empty_message,
+        console=console,
+    )
 
 
 @repos_app.command("add")
@@ -207,7 +856,7 @@ def repos_add(
                 open_issues=fresh.open_issues_count,
             )
             await session.commit()
-        console.print(f"[green]Now tracking {full_name}.[/green]")
+        _info(f"[green]Now tracking {full_name}.[/green]")
 
     _run_async(_impl)
 
@@ -224,11 +873,10 @@ def repos_remove(full_name: str = typer.Argument(..., metavar="owner/name")) -> 
         async with SessionFactory() as session:
             repo = await get_repository_by_name(session, full_name)
             if repo is None:
-                console.print(f"[red]Repository not known:[/red] {full_name}")
-                raise typer.Exit(1)
+                _fail(f"repository not known: {full_name}", ExitCode.ERROR)
             await untrack(session, repo)
             await session.commit()
-        console.print(f"[green]Stopped tracking {full_name}; history was kept.[/green]")
+        _info(f"[green]Stopped tracking {full_name}; history was kept.[/green]")
 
     _run_async(_impl)
 
@@ -245,11 +893,10 @@ def repos_pause(full_name: str = typer.Argument(..., metavar="owner/name")) -> N
         async with SessionFactory() as session:
             repo = await get_repository_by_name(session, full_name)
             if repo is None:
-                console.print(f"[red]Repository not known:[/red] {full_name}")
-                raise typer.Exit(1)
+                _fail(f"repository not known: {full_name}", ExitCode.ERROR)
             await pause(session, repo)
             await session.commit()
-        console.print(f"[yellow]Paused tracking for {full_name}.[/yellow]")
+        _info(f"[yellow]Paused tracking for {full_name}.[/yellow]")
 
     _run_async(_impl)
 
@@ -266,11 +913,10 @@ def repos_resume(full_name: str = typer.Argument(..., metavar="owner/name")) -> 
         async with SessionFactory() as session:
             repo = await get_repository_by_name(session, full_name)
             if repo is None:
-                console.print(f"[red]Repository not known:[/red] {full_name}")
-                raise typer.Exit(1)
+                _fail(f"repository not known: {full_name}", ExitCode.ERROR)
             await resume(session, repo)
             await session.commit()
-        console.print(f"[green]Resumed tracking for {full_name}.[/green]")
+        _info(f"[green]Resumed tracking for {full_name}.[/green]")
 
     _run_async(_impl)
 
@@ -287,16 +933,14 @@ def repos_refresh(full_name: str = typer.Argument(..., metavar="owner/name")) ->
 
         async with SessionFactory() as session:
             if await get_repository_by_name(session, full_name) is None:
-                console.print(f"[red]Repository not known:[/red] {full_name}")
-                raise typer.Exit(1)
+                _fail(f"repository not known: {full_name}", ExitCode.ERROR)
         saved = await run_snapshot(repo_name=full_name, force=True)
         async with SessionFactory() as session:
             repo = await get_repository_by_name(session, full_name)
             assert repo is not None
             state = await tracking_state(session, repo)
         if state.status.value == "failed":
-            console.print(f"[red]Refresh failed:[/red] {state.last_snapshot_error}")
-            raise typer.Exit(1)
+            _fail(f"refresh failed: {state.last_snapshot_error}", ExitCode.ERROR)
         console.print(
             f"[green]Refresh complete for {full_name} ({saved} snapshot saved).[/green]"
         )
@@ -311,15 +955,20 @@ def repos_list(
     ),
     status: str | None = typer.Option(None, "--status"),
     label: str | None = typer.Option(None, "--label"),
-    output: str = typer.Option("table", "--output", help="table or json"),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
-    if output not in {"table", "json"}:
-        console.print("[red]Error:[/red] --output must be table or json")
-        raise typer.Exit(2)
+    resolved = _resolve_output(output)
+
     valid_statuses = {"healthy", "stale", "failed", "paused", "untracked"}
     if status is not None and status not in valid_statuses:
-        console.print("[red]Error:[/red] unknown tracking status")
-        raise typer.Exit(2)
+        _fail(
+            f"unknown tracking status {status!r} "
+            f"(choose from {', '.join(sorted(valid_statuses))})",
+            ExitCode.USAGE,
+        )
+    _require_database()
 
     async def _impl() -> None:
         from db.base import SessionFactory
@@ -349,53 +998,66 @@ def repos_list(
                         "tracking_paused": state.tracking_paused,
                         "label": state.label,
                         "snapshot_count": state.snapshot_count,
-                        "history_start_at": (
-                            state.history_start_at.isoformat()
-                            if state.history_start_at
-                            else None
-                        ),
-                        "last_successful_snapshot_at": (
-                            state.last_successful_snapshot_at.isoformat()
-                            if state.last_successful_snapshot_at
-                            else None
-                        ),
-                        "last_snapshot_attempt_at": (
-                            state.last_snapshot_attempt_at.isoformat()
-                            if state.last_snapshot_attempt_at
-                            else None
-                        ),
+                        "history_start_at": state.history_start_at,
+                        "last_successful_snapshot_at": state.last_successful_snapshot_at,
+                        "last_snapshot_attempt_at": state.last_snapshot_attempt_at,
                         "last_snapshot_error": state.last_snapshot_error,
-                        "next_snapshot_at": (
-                            state.next_snapshot_at.isoformat()
-                            if state.next_snapshot_at
-                            else None
-                        ),
+                        "next_snapshot_at": state.next_snapshot_at,
                     }
                 )
-        if output == "json":
-            typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
-        else:
-            _render_tracking_table(rows, "Tracked repositories")
+        _emit_tracking_rows(
+            rows,
+            resolved,
+            title="Tracked repositories",
+            empty_message="No tracked repositories. Add one with `radar repos add`.",
+        )
 
     _run_async(_impl)
 
 
-def _render_repos_table(repos: list[RepoSummary], title: str) -> None:
-    table = Table(title=title)
-    table.add_column("#", justify="right")
-    table.add_column("Repository")
-    table.add_column("Language")
-    table.add_column("Stars", justify="right")
-    table.add_column("Forks", justify="right")
-    for index, repo in enumerate(repos, start=1):
-        table.add_row(
-            str(index),
-            repo.full_name,
-            repo.language or "—",
-            f"{repo.stargazers_count:,}",
-            f"{repo.forks_count:,}",
-        )
-    console.print(table)
+_REPO_TABLE_COLUMNS: tuple[Column, ...] = (
+    Column("rank", "#", align="right"),
+    Column("repository", "Repository"),
+    Column("language", "Language"),
+    Column("stars", "Stars", align="right"),
+    Column("forks", "Forks", align="right"),
+)
+_REPO_CSV_COLUMNS: tuple[Column, ...] = (
+    *_REPO_TABLE_COLUMNS,
+    Column("html_url", "URL"),
+)
+
+
+def _repo_rows(repos: list[RepoSummary]) -> list[dict[str, object]]:
+    return [
+        {
+            "rank": index,
+            "repository": repo.full_name,
+            "language": repo.language,
+            "stars": repo.stargazers_count,
+            "forks": repo.forks_count,
+            "html_url": repo.html_url,
+        }
+        for index, repo in enumerate(repos, start=1)
+    ]
+
+
+def _emit_repo_rows(
+    repos: list[RepoSummary],
+    output: str,
+    *,
+    title: str,
+    empty_message: str,
+) -> None:
+    columns = _REPO_TABLE_COLUMNS if output == "table" else _REPO_CSV_COLUMNS
+    emit_rows(
+        _repo_rows(repos),
+        columns,
+        output,
+        title=title,
+        empty_message=empty_message,
+        console=console,
+    )
 
 
 @app.command()
@@ -409,14 +1071,25 @@ def top(
         help="How many repositories to show.",
     ),
     save: bool = typer.Option(False, "--save", help="Store results in the database."),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
+    resolved = _resolve_output(output)
+    _warn_missing_token()
+
     async def _impl() -> None:
         async with GitHubClient() as client:
             repos = await client.search_repos("stars:>1000", per_page=limit)
         if save:
             saved = await _store_repos(repos)
-            console.print(f"[green]Saved {saved} repositories.[/green]")
-        _render_repos_table(repos, "Top repositories by stars")
+            _info(f"[green]Saved {saved} repositories.[/green]")
+        _emit_repo_rows(
+            repos,
+            resolved,
+            title="Top repositories by stars",
+            empty_message="No repositories matched the search.",
+        )
 
     _run_async(_impl)
 
@@ -439,7 +1112,11 @@ def search(
         help="How many repositories to show.",
     ),
     save: bool = typer.Option(False, "--save", help="Store results in the database."),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
+    resolved = _resolve_output(output)
     parts = [
         part
         for part in (
@@ -451,18 +1128,24 @@ def search(
     ]
     q = " ".join(parts)
     if not q:
-        console.print(
-            "[red]Error:[/red] give --query or at least one filter (--language/--min-stars)"
+        _fail(
+            "give --query or at least one filter (--language/--min-stars)",
+            ExitCode.USAGE,
         )
-        raise typer.Exit(2)
+    _warn_missing_token()
 
     async def _impl() -> None:
         async with GitHubClient() as client:
             repos = await client.search_repos(q, per_page=limit)
         if save:
             saved = await _store_repos(repos)
-            console.print(f"[green]Saved {saved} repositories.[/green]")
-        _render_repos_table(repos, "Search results")
+            _info(f"[green]Saved {saved} repositories.[/green]")
+        _emit_repo_rows(
+            repos,
+            resolved,
+            title="Search results",
+            empty_message="No repositories matched the query.",
+        )
 
     _run_async(_impl)
 
@@ -475,10 +1158,13 @@ def history(
         help="Tracked repository in owner/name format, e.g. psf/requests.",
     ),
     days: int = typer.Option(30, "--days", min=1, help="How many days back to show."),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
-    if "/" not in full_name:
-        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
-        raise typer.Exit(2)
+    resolved = _resolve_output(output)
+    full_name = _require_full_name(full_name)
+    _require_database()
 
     async def _impl() -> None:
         from datetime import datetime, timedelta
@@ -489,51 +1175,78 @@ def history(
         async with SessionFactory() as session:
             repo = await get_repository_by_name(session, full_name)
             if repo is None:
-                console.print(f"[red]Repository not tracked:[/red] {full_name}")
-                raise typer.Exit(1)
+                _fail(f"repository not tracked: {full_name}")
             since = datetime.now(UTC) - timedelta(days=days)
+            assert repo is not None
             snapshots = await get_history(session, repo.id, since=since)
 
-        if not snapshots:
-            console.print(
-                f"[yellow]No snapshots for {full_name} in the last {days} days.[/yellow]"
-            )
-            return
-
-        table = Table(title=f"History: {full_name} (last {days} days)")
-        table.add_column("Observed at")
-        table.add_column("Stars", justify="right")
-        table.add_column("Forks", justify="right")
-        table.add_column("Δ stars", justify="right")
+        rows: list[dict[str, object]] = []
         previous: int | None = None
         for snap in snapshots:
             delta = snap.stargazers_count - previous if previous is not None else 0
-            table.add_row(
-                snap.observed_at.strftime("%Y-%m-%d %H:%M"),
-                f"{snap.stargazers_count:,}",
-                f"{snap.forks_count:,}",
-                f"{delta:+d}",
+            rows.append(
+                {
+                    "observed_at": snap.observed_at,
+                    "stars": snap.stargazers_count,
+                    "forks": snap.forks_count,
+                    "open_issues": snap.open_issues_count,
+                    "stars_delta": delta,
+                    "quality_status": snap.quality_status,
+                }
             )
             previous = snap.stargazers_count
-        console.print(table)
+        emit_rows(
+            rows,
+            (
+                Column("observed_at", "Observed at (UTC)"),
+                Column("stars", "Stars", align="right"),
+                Column("forks", "Forks", align="right"),
+                Column("open_issues", "Open issues", align="right"),
+                Column("stars_delta", "Δ stars", align="right"),
+                Column("quality_status", "Quality"),
+            ),
+            resolved,
+            title=f"History: {full_name} (last {days} days)",
+            empty_message=f"No snapshots for {full_name} in the last {days} days.",
+            console=console,
+        )
 
     _run_async(_impl)
 
 
 @app.command()
-def snapshot() -> None:
-    async def _impl() -> None:
-        from collector.pipeline import run_snapshot
+def snapshot(
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table or json."
+    ),
+) -> None:
+    resolved = _resolve_output(output)
+    _require_database()
+    _warn_missing_token()
 
-        saved = await run_snapshot()
-        if saved:
-            console.print(
-                f"[green]Snapshot complete: {saved} repository(-ies) updated.[/green]"
+    async def _impl() -> None:
+        from collector.pipeline import run_snapshot_result
+
+        result = await run_snapshot_result()
+        payload = {
+            "saved": result.saved,
+            "total_repositories": result.total_repositories,
+            "succeeded_repositories": result.succeeded_repositories,
+            "failed_repositories": result.failed_repositories,
+            "skipped_repositories": result.skipped_repositories,
+        }
+        if resolved == "json":
+            emit_document(payload, "json")
+        elif result.saved:
+            _info(
+                f"[green]Snapshot complete: {result.saved} repository(-ies) updated.[/green]"
             )
         else:
-            console.print(
+            _info(
                 "[yellow]No tracked repositories yet. Try `radar top --save` first.[/yellow]"
             )
+        if result.failed_repositories:
+            raise typer.Exit(ExitCode.ERROR)
 
     _run_async(_impl)
 
@@ -560,16 +1273,17 @@ def backfill(
         min=1,
         help="Maximum concurrent repositories (safe default: 1).",
     ),
-    output: str = typer.Option("table", "--output", help="table or json"),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
+    resolved = _resolve_output(output)
     if (full_name is None) == (not all_repositories):
-        console.print("[red]Error:[/red] give owner/name or use --all")
-        raise typer.Exit(2)
+        _fail("give owner/name or use --all", ExitCode.USAGE)
     if full_name is not None:
         full_name = _require_full_name(full_name)
-    if output not in {"table", "json"}:
-        console.print("[red]Error:[/red] --output must be table or json")
-        raise typer.Exit(2)
+    _require_database()
+    _warn_missing_token()
 
     async def _impl() -> None:
         from collector.backfill import run_backfill
@@ -588,62 +1302,80 @@ def backfill(
                 concurrency=concurrency,
                 session=session,
             )
-        if output == "json":
-            typer.echo(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
-            if any(item.error for item in result.repositories):
-                raise typer.Exit(1)
-            return
         title = "Backfill plan" if dry_run else "Backfill result"
-        rows = [item.as_dict() for item in result.repositories]
-        if rows:
-            _render_tracking_table(
-                [
-                    {
-                        "repository": item["repository"],
-                        "status": (
-                            "planned"
-                            if dry_run
-                            else ("failed" if item["error"] else "updated")
-                        ),
-                        "label": f"{item['inserted']}/{item['planned']} snapshots",
-                        "snapshot_count": item["skipped_existing"],
-                        "last_successful_snapshot_at": None,
-                        "last_snapshot_error": item["error"],
-                    }
-                    for item in rows
-                ],
-                title,
-            )
-        else:
-            console.print("[yellow]No active tracked repositories found.[/yellow]")
+        rows = [
+            {
+                "repository": item.repository,
+                "status": (
+                    "planned" if dry_run else ("failed" if item.error else "updated")
+                ),
+                "planned": item.planned,
+                "inserted": item.inserted,
+                "skipped_existing": item.skipped_existing,
+                "error": item.error,
+            }
+            for item in result.repositories
+        ]
+        emit_rows(
+            rows,
+            (
+                Column("repository", "Repository"),
+                Column("status", "Status"),
+                Column("planned", "Planned", align="right"),
+                Column("inserted", "Inserted", align="right"),
+                Column("skipped_existing", "Existing", align="right"),
+                Column("error", "Error"),
+            ),
+            resolved,
+            title=title,
+            empty_message="No active tracked repositories found.",
+            console=console,
+        )
         action = "Planned" if dry_run else "Inserted"
         count = result.planned if dry_run else result.inserted
-        console.print(f"[green]{action} {count} snapshot(s).[/green]")
+        if resolved == "table":
+            _info(f"[green]{action} {count} snapshot(s).[/green]")
         if any(item.error for item in result.repositories):
-            raise typer.Exit(1)
+            raise typer.Exit(ExitCode.ERROR)
 
     _run_async(_impl)
 
 
 @app.command("quota")
-def quota() -> None:
+def quota(
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
+) -> None:
+    resolved = _resolve_output(output)
+    _warn_missing_token()
+
     async def _impl() -> None:
+        from datetime import datetime
+
         async with GitHubClient() as client:
             data = await client.get_rate_limit()
-        table = Table(title="GitHub API rate limit")
-        table.add_column("Resource")
-        table.add_column("Limit", justify="right")
-        table.add_column("Used", justify="right")
-        table.add_column("Remaining", justify="right")
-        table.add_column("Reset epoch", justify="right")
-        table.add_row(
-            str(data["resource"]),
-            str(data["limit"]),
-            str(data["used"]),
-            str(data["remaining"]),
-            str(data["reset"]),
+        reset = int(data.get("reset") or 0)
+        row = {
+            "resource": str(data["resource"]),
+            "limit": int(data["limit"]),
+            "used": int(data["used"]),
+            "remaining": int(data["remaining"]),
+            "reset_at": (datetime.fromtimestamp(reset, UTC) if reset else None),
+        }
+        emit_rows(
+            [row],
+            (
+                Column("resource", "Resource"),
+                Column("limit", "Limit", align="right"),
+                Column("used", "Used", align="right"),
+                Column("remaining", "Remaining", align="right"),
+                Column("reset_at", "Resets at (UTC)"),
+            ),
+            resolved,
+            title="GitHub API rate limit",
+            console=console,
         )
-        console.print(table)
 
     _run_async(_impl)
 
@@ -655,19 +1387,27 @@ def repo(
         metavar="owner/name",
         help="Repository in owner/name format, e.g. psf/requests",
     ),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table or json."
+    ),
 ) -> None:
-    if "/" not in full_name:
-        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
-        raise typer.Exit(2)
+    resolved = _resolve_output(output)
+    full_name = _require_full_name(full_name)
+    _warn_missing_token()
 
     async def _impl() -> None:
         async with GitHubClient() as client:
             result = await client.get_repo(full_name)
+        if resolved == "json":
+            emit_document(result.model_dump(), "json")
+            return
+        if resolved == "csv":
+            _fail("`radar repo` supports table or json output only", ExitCode.USAGE)
         panel = Panel(
             f"[bold]{result.full_name}[/bold]\n\n{result.description or '—'}\n\n"
             f"Language: {result.language or '—'}\n"
-            f"Stars: {result.stargazers_count}\n"
-            f"Forks: {result.forks_count}\n"
+            f"Stars: {result.stargazers_count:,}\n"
+            f"Forks: {result.forks_count:,}\n"
             f"URL: {result.html_url}",
             title="Repository",
         )
@@ -686,10 +1426,13 @@ def velocity(
     history_days: int = typer.Option(
         180, "--history-days", min=7, help="How many days of history to use."
     ),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
-    if "/" not in full_name:
-        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
-        raise typer.Exit(2)
+    resolved = _resolve_output(output)
+    full_name = _require_full_name(full_name)
+    _require_database()
 
     async def _impl() -> None:
         from analytics import service
@@ -699,28 +1442,51 @@ def velocity(
         async with SessionFactory() as session:
             repo = await get_repository_by_name(session, full_name)
             if repo is None:
-                console.print(f"[red]Repository not tracked:[/red] {full_name}")
-                raise typer.Exit(1)
+                _fail(f"repository not tracked: {full_name}")
+            assert repo is not None
             velocities, trend, _stars = await service.repo_velocity(
                 session, repo.id, windows=(7, 30, 90), history_days=history_days
             )
 
-        if not velocities:
-            console.print(
-                f"[yellow]Not enough snapshot history for {full_name}.[/yellow]"
+        rows = [
+            {
+                "repository": full_name,
+                "window_days": v.window_days,
+                "stars_per_day": round(v.stars_per_day, 4),
+                "stars_gained": v.stars_gained,
+                "start_day": v.start_day,
+                "end_day": v.end_day,
+            }
+            for v in velocities
+        ]
+        if resolved == "json":
+            emit_document(
+                {
+                    "repository": full_name,
+                    "history_days": history_days,
+                    "velocities": rows,
+                    "trend": to_jsonable(trend),
+                },
+                "json",
             )
             return
 
-        table = Table(title=f"Velocity: {full_name}")
-        table.add_column("Window")
-        table.add_column("Stars/day", justify="right")
-        table.add_column("Gained", justify="right")
-        for v in velocities:
-            table.add_row(
-                f"{v.window_days}d", f"{v.stars_per_day:.2f}", str(v.stars_gained)
-            )
-        console.print(table)
-        if trend is not None:
+        emit_rows(
+            rows,
+            (
+                Column("repository", "Repository"),
+                Column("window_days", "Window (days)", align="right"),
+                Column("stars_per_day", "Stars/day", align="right"),
+                Column("stars_gained", "Gained", align="right"),
+                Column("start_day", "Start"),
+                Column("end_day", "End"),
+            ),
+            resolved,
+            title=f"Velocity: {full_name}",
+            empty_message=f"Not enough snapshot history for {full_name}.",
+            console=console,
+        )
+        if resolved == "table" and trend is not None:
             console.print(
                 f"OLS trend: [bold]{trend.slope:.2f}[/bold] stars/day, "
                 f"R² {trend.r_squared:.3f} ({trend.n_points} points)"
@@ -737,10 +1503,13 @@ def bursts(
         help="Tracked repository in owner/name format, e.g. psf/requests.",
     ),
     days: int = typer.Option(90, "--days", min=7, help="How many days back to scan."),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
-    if "/" not in full_name:
-        console.print("[red]Error:[/red] expected owner/name format, e.g. psf/requests")
-        raise typer.Exit(2)
+    resolved = _resolve_output(output)
+    full_name = _require_full_name(full_name)
+    _require_database()
 
     async def _impl() -> None:
         from analytics import service
@@ -751,8 +1520,8 @@ def bursts(
         async with SessionFactory() as session:
             repo = await get_repository_by_name(session, full_name)
             if repo is None:
-                console.print(f"[red]Repository not tracked:[/red] {full_name}")
-                raise typer.Exit(1)
+                _fail(f"repository not tracked: {full_name}")
+            assert repo is not None
             events, active = await service.repo_bursts(
                 session,
                 repo.id,
@@ -763,30 +1532,36 @@ def bursts(
                 min_duration=settings.analytics_burst_min_days,
             )
 
-        if not events:
-            console.print(
-                f"No bursts detected for {full_name} in the last {days} days."
+        rows = [to_jsonable(event) for event in events]
+        if resolved == "json":
+            emit_document(
+                {
+                    "repository": full_name,
+                    "days": days,
+                    "active_burst": active,
+                    "items": rows,
+                },
+                "json",
             )
             return
 
-        table = Table(title=f"Bursts: {full_name} (last {days} days)")
-        table.add_column("Start")
-        table.add_column("End")
-        table.add_column("Days", justify="right")
-        table.add_column("Peak", justify="right")
-        table.add_column("Gained", justify="right")
-        table.add_column("Severity", justify="right")
-        for e in events:
-            table.add_row(
-                e.start_day.isoformat(),
-                e.end_day.isoformat(),
-                str(e.duration_days),
-                str(e.peak_delta),
-                str(e.total_gained),
-                f"{e.severity:.1f}x",
-            )
-        console.print(table)
-        if active:
+        emit_rows(
+            rows,
+            (
+                Column("start_day", "Start"),
+                Column("end_day", "End"),
+                Column("duration_days", "Days", align="right"),
+                Column("peak_day", "Peak day"),
+                Column("peak_delta", "Peak Δ", align="right"),
+                Column("total_gained", "Gained", align="right"),
+                Column("severity", "Severity", align="right"),
+            ),
+            resolved,
+            title=f"Bursts: {full_name} (last {days} days)",
+            empty_message=f"No bursts detected for {full_name} in the last {days} days.",
+            console=console,
+        )
+        if resolved == "table" and active:
             console.print(
                 "[red bold]ACTIVE BURST[/red bold] — the repo is taking off right now."
             )
@@ -802,41 +1577,59 @@ def leaderboard(
     limit: int = typer.Option(
         20, "--limit", "-n", min=1, max=100, help="How many repositories to show."
     ),
+    language: str | None = typer.Option(None, "--language", "-l"),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
+    resolved = _resolve_output(output)
     if window not in (7, 30, 90):
-        console.print("[red]Error:[/red] --window must be 7, 30 or 90")
-        raise typer.Exit(2)
+        _fail("--window must be 7, 30 or 90", ExitCode.USAGE)
+    _require_database()
 
     async def _impl() -> None:
         from analytics import service
         from db.base import SessionFactory
 
         async with SessionFactory() as session:
-            total, scored = await service.leaderboard(
-                session, window_days=window, limit=limit, offset=0
+            _total, scored = await service.leaderboard(
+                session,
+                window_days=window,
+                limit=limit,
+                offset=0,
+                language=language,
             )
 
-        if not scored:
-            console.print(
-                "[yellow]No tracked repositories with enough snapshot history.[/yellow]"
+        rows: list[dict[str, object]] = []
+        for index, (repo, velocity, stars) in enumerate(scored, start=1):
+            owner, _, name = repo.full_name.partition("/")
+            rows.append(
+                {
+                    "rank": index,
+                    "owner": owner,
+                    "name": name,
+                    "full_name": repo.full_name,
+                    "language": repo.language,
+                    "stars": stars,
+                    "stars_per_day": round(velocity.stars_per_day, 2),
+                    "stars_gained": velocity.stars_gained,
+                }
             )
-            return
-
-        table = Table(title=f"Fastest growing ({window}d window)")
-        table.add_column("#", justify="right")
-        table.add_column("Repository")
-        table.add_column("Language")
-        table.add_column("Stars", justify="right")
-        table.add_column("Per day", justify="right")
-        for index, (repo, v, stars) in enumerate(scored, start=1):
-            table.add_row(
-                str(index),
-                repo.full_name,
-                repo.language or "—",
-                f"{stars:,}",
-                f"+{v.stars_per_day:.1f}",
-            )
-        console.print(table)
+        emit_rows(
+            rows,
+            (
+                Column("rank", "#", align="right"),
+                Column("full_name", "Repository"),
+                Column("language", "Language"),
+                Column("stars", "Stars", align="right"),
+                Column("stars_per_day", "Per day", align="right"),
+                Column("stars_gained", "Gained", align="right"),
+            ),
+            resolved,
+            title=f"Fastest growing ({window}d window)",
+            empty_message="No tracked repositories with enough snapshot history.",
+            console=console,
+        )
 
     _run_async(_impl)
 
@@ -858,13 +1651,12 @@ def export_analytics(
     ),
 ) -> None:
     if format not in {"json", "csv"}:
-        console.print("[red]Error:[/red] --format must be json or csv")
-        raise typer.Exit(2)
+        _fail("--format must be json or csv", ExitCode.USAGE)
     if target != "leaderboard":
         target = _require_full_name(target)
     if target == "leaderboard" and window not in {7, 30, 90}:
-        console.print("[red]Error:[/red] --window must be one of 7, 30 or 90")
-        raise typer.Exit(2)
+        _fail("--window must be one of 7, 30 or 90", ExitCode.USAGE)
+    _require_database()
 
     async def _impl() -> None:
         from analytics import service
@@ -907,8 +1699,7 @@ def export_analytics(
             async with SessionFactory() as session:
                 repo = await get_repository_by_name(session, target)
                 if repo is None:
-                    console.print(f"[red]Repository not known:[/red] {target}")
-                    raise typer.Exit(1)
+                    _fail(f"repository not known: {target}", ExitCode.ERROR)
                 series = await service.repo_series(
                     session, repo.id, history_days=max(window, 7)
                 )
@@ -972,7 +1763,7 @@ def export_analytics(
             Path(output_file).write_text(
                 content + ("" if content.endswith("\n") else "\n")
             )
-            console.print(f"[green]Export written to {output_file}.[/green]")
+            _info(f"[green]Export written to {output_file}.[/green]")
         else:
             typer.echo(content, nl=not content.endswith("\n"))
 
@@ -991,8 +1782,7 @@ def alerts_add(
 ) -> None:
     kind = _ALERT_TYPE_ALIASES.get(alert_type)
     if kind is None:
-        console.print("[red]Error:[/red] --type must be burst, velocity or milestone")
-        raise typer.Exit(2)
+        _fail("--type must be burst, velocity or milestone", ExitCode.USAGE)
 
     async def _impl() -> None:
         from alerts import RuleSpec, validate_rule
@@ -1005,54 +1795,71 @@ def alerts_add(
                 RuleSpec(kind=kind, threshold=threshold, window_days=window)
             )
         except ValueError as exc:
-            console.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(2) from exc
+            _fail(str(exc), ExitCode.USAGE)
 
         async with SessionFactory() as session:
             repo = await get_repository_by_name(session, full_name)
             if repo is None:
-                console.print(f"[red]Repository not tracked:[/red] {full_name}")
-                raise typer.Exit(1)
+                _fail(f"repository not tracked: {full_name}", ExitCode.ERROR)
             rule = await create_rule(session, repo, spec, enabled=not disabled)
             await session.commit()
-        console.print(f"[green]Created alert rule #{rule.id}[/green] for {full_name}.")
+        _info(f"[green]Created alert rule #{rule.id}[/green] for {full_name}.")
 
     _run_async(_impl)
 
 
+def _rule_condition(rule) -> str:
+    if rule.kind == "velocity_above":
+        return f">= {rule.threshold:g}/day ({rule.window_days}d)"
+    if rule.kind == "stars_reached":
+        return f">= {rule.threshold:g} stars"
+    return "new burst"
+
+
 @alerts_app.command("list")
-def alerts_list() -> None:
+def alerts_list(
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
+) -> None:
+    resolved = _resolve_output(output)
+    _require_database()
+
     async def _impl() -> None:
         from db.alerts import list_rules
         from db.base import SessionFactory
 
         async with SessionFactory() as session:
             rules, _total = await list_rules(session)
-        if not rules:
-            console.print("[yellow]No alert rules configured.[/yellow]")
-            return
-
-        table = Table(title="Alert rules")
-        table.add_column("ID", justify="right")
-        table.add_column("Repository")
-        table.add_column("Type")
-        table.add_column("Condition")
-        table.add_column("Enabled")
-        for rule in rules:
-            if rule.kind == "velocity_above":
-                condition = f">= {rule.threshold:g}/day ({rule.window_days}d)"
-            elif rule.kind == "stars_reached":
-                condition = f">= {rule.threshold:g} stars"
-            else:
-                condition = "new burst"
-            table.add_row(
-                str(rule.id),
-                rule.repository.full_name,
-                rule.kind,
-                condition,
-                "yes" if rule.enabled else "no",
-            )
-        console.print(table)
+        rows = [
+            {
+                "id": rule.id,
+                "repository": rule.repository.full_name,
+                "kind": rule.kind,
+                "condition": _rule_condition(rule),
+                "threshold": rule.threshold,
+                "window_days": rule.window_days,
+                "enabled": rule.enabled,
+                "last_value": rule.last_value,
+                "last_evaluated_at": rule.last_evaluated_at,
+            }
+            for rule in rules
+        ]
+        emit_rows(
+            rows,
+            (
+                Column("id", "ID", align="right"),
+                Column("repository", "Repository"),
+                Column("kind", "Type"),
+                Column("condition", "Condition"),
+                Column("enabled", "Enabled"),
+                Column("last_value", "Last value", align="right"),
+            ),
+            resolved,
+            title="Alert rules",
+            empty_message="No alert rules configured.",
+            console=console,
+        )
 
     _run_async(_impl)
 
@@ -1064,12 +1871,11 @@ async def _set_alert_rule_enabled(rule_id: int, enabled: bool) -> None:
     async with SessionFactory() as session:
         rule = await get_rule(session, rule_id)
         if rule is None:
-            console.print(f"[red]Alert rule not found:[/red] {rule_id}")
-            raise typer.Exit(1)
+            _fail(f"alert rule not found: {rule_id}", ExitCode.ERROR)
         rule.enabled = enabled
         await session.commit()
     state = "enabled" if enabled else "disabled"
-    console.print(f"[green]Alert rule #{rule_id} {state}.[/green]")
+    _info(f"[green]Alert rule #{rule_id} {state}.[/green]")
 
 
 @alerts_app.command("enable")
@@ -1087,8 +1893,8 @@ def alerts_delete(
     rule_id: int = typer.Argument(..., min=1),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
 ) -> None:
-    if not yes and not typer.confirm(f"Delete alert rule #{rule_id}?"):
-        raise typer.Abort()
+    if not yes and not _confirm(f"Delete alert rule #{rule_id}?"):
+        _abort()
 
     async def _impl() -> None:
         from db.alerts import delete_rule, get_rule
@@ -1097,11 +1903,10 @@ def alerts_delete(
         async with SessionFactory() as session:
             rule = await get_rule(session, rule_id)
             if rule is None:
-                console.print(f"[red]Alert rule not found:[/red] {rule_id}")
-                raise typer.Exit(1)
+                _fail(f"alert rule not found: {rule_id}", ExitCode.ERROR)
             await delete_rule(session, rule)
             await session.commit()
-        console.print(f"[green]Deleted alert rule #{rule_id}.[/green]")
+        _info(f"[green]Deleted alert rule #{rule_id}.[/green]")
 
     _run_async(_impl)
 
@@ -1110,7 +1915,13 @@ def alerts_delete(
 def alerts_events(
     unread: bool = typer.Option(False, "--unread", help="Show only unread events."),
     limit: int = typer.Option(20, "--limit", "-n", min=1, max=100),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
+    resolved = _resolve_output(output)
+    _require_database()
+
     async def _impl() -> None:
         from db.alerts import list_events
         from db.base import SessionFactory
@@ -1121,27 +1932,35 @@ def alerts_events(
                 acknowledged=False if unread else None,
                 limit=limit,
             )
-        if not events:
-            console.print("[yellow]No alert events found.[/yellow]")
-            return
-
-        table = Table(title="Alert events")
-        table.add_column("ID", justify="right")
-        table.add_column("Created")
-        table.add_column("Repository")
-        table.add_column("Type")
-        table.add_column("Message")
-        table.add_column("Read")
-        for event in events:
-            table.add_row(
-                str(event.id),
-                event.created_at.strftime("%Y-%m-%d %H:%M"),
-                event.repository_full_name,
-                event.kind,
-                event.message,
-                "yes" if event.acknowledged_at else "no",
-            )
-        console.print(table)
+        rows = [
+            {
+                "id": event.id,
+                "created_at": event.created_at,
+                "repository": event.repository_full_name,
+                "kind": event.kind,
+                "title": event.title,
+                "message": event.message,
+                "current_value": event.current_value,
+                "delivery_status": event.delivery_status,
+                "acknowledged": event.acknowledged_at is not None,
+            }
+            for event in events
+        ]
+        emit_rows(
+            rows,
+            (
+                Column("id", "ID", align="right"),
+                Column("created_at", "Created (UTC)"),
+                Column("repository", "Repository"),
+                Column("kind", "Type"),
+                Column("acknowledged", "Read"),
+                Column("message", "Message"),
+            ),
+            resolved,
+            title="Alert events",
+            empty_message="No alert events found.",
+            console=console,
+        )
 
     _run_async(_impl)
 
@@ -1155,11 +1974,10 @@ def alerts_acknowledge(event_id: int = typer.Argument(..., min=1)) -> None:
         async with SessionFactory() as session:
             event = await get_event(session, event_id)
             if event is None:
-                console.print(f"[red]Alert event not found:[/red] {event_id}")
-                raise typer.Exit(1)
+                _fail(f"alert event not found: {event_id}", ExitCode.ERROR)
             await set_event_acknowledged(session, event, True)
             await session.commit()
-        console.print(f"[green]Acknowledged alert event #{event_id}.[/green]")
+        _info(f"[green]Acknowledged alert event #{event_id}.[/green]")
 
     _run_async(_impl)
 
@@ -1168,8 +1986,8 @@ def alerts_acknowledge(event_id: int = typer.Argument(..., min=1)) -> None:
 def alerts_acknowledge_all(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
 ) -> None:
-    if not yes and not typer.confirm("Acknowledge all unread alert events?"):
-        raise typer.Abort()
+    if not yes and not _confirm("Acknowledge all unread alert events?"):
+        _abort()
 
     async def _impl() -> None:
         from db.alerts import acknowledge_all_events
@@ -1178,7 +1996,7 @@ def alerts_acknowledge_all(
         async with SessionFactory() as session:
             changed = await acknowledge_all_events(session)
             await session.commit()
-        console.print(f"[green]Acknowledged {changed} alert event(s).[/green]")
+        _info(f"[green]Acknowledged {changed} alert event(s).[/green]")
 
     _run_async(_impl)
 
@@ -1198,15 +2016,13 @@ def notifications_add(
     ),
 ) -> None:
     if provider not in {"generic", "slack", "discord"}:
-        console.print("[red]Error:[/red] provider must be generic, slack or discord")
-        raise typer.Exit(2)
+        _fail("provider must be generic, slack or discord", ExitCode.USAGE)
     from security import UnsafeURL, validate_webhook_url
 
     try:
         url = validate_webhook_url(url)
     except UnsafeURL as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(2) from exc
+        _fail(str(exc), ExitCode.USAGE)
 
     async def _impl() -> None:
         from db.base import SessionFactory
@@ -1214,8 +2030,7 @@ def notifications_add(
 
         async with SessionFactory() as session:
             if await get_endpoint_by_name(session, name) is not None:
-                console.print(f"[red]Endpoint already exists:[/red] {name}")
-                raise typer.Exit(1)
+                _fail(f"endpoint already exists: {name}", ExitCode.ERROR)
             endpoint = await create_endpoint(
                 session,
                 name=name,
@@ -1234,33 +2049,47 @@ def notifications_add(
 @notifications_app.command("list")
 def notifications_list(
     enabled: bool | None = typer.Option(None, "--enabled/--disabled"),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
+    resolved = _resolve_output(output)
+    _require_database()
+
     async def _impl() -> None:
         from db.base import SessionFactory
         from db.notifications import list_endpoints
 
         async with SessionFactory() as session:
             endpoints, _total = await list_endpoints(session, enabled=enabled)
-        if not endpoints:
-            console.print("[yellow]No notification endpoints configured.[/yellow]")
-            return
-        table = Table(title="Notification endpoints")
-        table.add_column("ID", justify="right")
-        table.add_column("Name")
-        table.add_column("Provider")
-        table.add_column("Enabled")
-        table.add_column("Failures", justify="right")
-        table.add_column("Last error")
-        for endpoint in endpoints:
-            table.add_row(
-                str(endpoint.id),
-                endpoint.name,
-                endpoint.provider,
-                "yes" if endpoint.enabled else "no",
-                str(endpoint.failure_count),
-                endpoint.last_error or "—",
-            )
-        console.print(table)
+        rows = [
+            {
+                "id": endpoint.id,
+                "name": endpoint.name,
+                "provider": endpoint.provider,
+                "enabled": endpoint.enabled,
+                "failure_count": endpoint.failure_count,
+                "url_configured": bool(endpoint.url),
+                "last_delivery_at": endpoint.last_delivery_at,
+                "last_error": endpoint.last_error,
+            }
+            for endpoint in endpoints
+        ]
+        emit_rows(
+            rows,
+            (
+                Column("id", "ID", align="right"),
+                Column("name", "Name"),
+                Column("provider", "Provider"),
+                Column("enabled", "Enabled"),
+                Column("failure_count", "Failures", align="right"),
+                Column("last_error", "Last error"),
+            ),
+            resolved,
+            title="Notification endpoints",
+            empty_message="No notification endpoints configured.",
+            console=console,
+        )
 
     _run_async(_impl)
 
@@ -1272,12 +2101,11 @@ async def _set_notification_enabled(endpoint_id: int, enabled: bool) -> None:
     async with SessionFactory() as session:
         endpoint = await get_endpoint(session, endpoint_id)
         if endpoint is None:
-            console.print(f"[red]Notification endpoint not found:[/red] {endpoint_id}")
-            raise typer.Exit(1)
+            _fail(f"notification endpoint not found: {endpoint_id}", ExitCode.ERROR)
         await set_endpoint_enabled(session, endpoint, enabled)
         await session.commit()
     state = "enabled" if enabled else "disabled"
-    console.print(f"[green]Notification endpoint #{endpoint_id} {state}.[/green]")
+    _info(f"[green]Notification endpoint #{endpoint_id} {state}.[/green]")
 
 
 @notifications_app.command("enable")
@@ -1316,9 +2144,8 @@ def notifications_test(endpoint_id: int = typer.Argument(..., min=1)) -> None:
             endpoint.last_error = error
             await session.commit()
         if not sent:
-            console.print(f"[red]Webhook test failed:[/red] {error}")
-            raise typer.Exit(1)
-        console.print("[green]Webhook test delivered.[/green]")
+            _fail(f"webhook test failed: {error}", ExitCode.ERROR)
+        _info("[green]Webhook test delivered.[/green]")
 
     _run_async(_impl)
 
@@ -1328,7 +2155,13 @@ def notifications_deliveries(
     endpoint_id: int | None = typer.Option(None, "--endpoint-id", min=1),
     delivery_status: str | None = typer.Option(None, "--status"),
     limit: int = typer.Option(20, "--limit", "-n", min=1, max=100),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output format: table, json or csv."
+    ),
 ) -> None:
+    resolved = _resolve_output(output)
+    _require_database()
+
     async def _impl() -> None:
         from db.base import SessionFactory
         from db.notifications import list_deliveries
@@ -1340,27 +2173,34 @@ def notifications_deliveries(
                 status=delivery_status,
                 limit=limit,
             )
-        if not deliveries:
-            console.print("[yellow]No webhook deliveries found.[/yellow]")
-            return
-        table = Table(title="Webhook deliveries")
-        table.add_column("ID", justify="right")
-        table.add_column("Event", justify="right")
-        table.add_column("Endpoint", justify="right")
-        table.add_column("Attempt", justify="right")
-        table.add_column("Status")
-        table.add_column("HTTP", justify="right")
-        table.add_column("Error")
-        for delivery in deliveries:
-            table.add_row(
-                str(delivery.id),
-                str(delivery.event_id),
-                str(delivery.endpoint_id or "—"),
-                str(delivery.attempt),
-                delivery.status,
-                str(delivery.response_status or "—"),
-                delivery.error or "—",
-            )
-        console.print(table)
+        rows = [
+            {
+                "id": delivery.id,
+                "event_id": delivery.event_id,
+                "endpoint_id": delivery.endpoint_id,
+                "attempt": delivery.attempt,
+                "status": delivery.status,
+                "response_status": delivery.response_status,
+                "attempted_at": delivery.attempted_at,
+                "delivered_at": delivery.delivered_at,
+                "error": delivery.error,
+            }
+            for delivery in deliveries
+        ]
+        emit_rows(
+            rows,
+            (
+                Column("id", "ID", align="right"),
+                Column("event_id", "Event", align="right"),
+                Column("attempt", "Attempt", align="right"),
+                Column("status", "Status"),
+                Column("response_status", "HTTP", align="right"),
+                Column("error", "Error"),
+            ),
+            resolved,
+            title="Webhook deliveries",
+            empty_message="No webhook deliveries found.",
+            console=console,
+        )
 
     _run_async(_impl)

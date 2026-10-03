@@ -131,7 +131,9 @@ def test_alerts_add_validates_type_and_condition() -> None:
 def test_alerts_add_requires_tracked_repository() -> None:
     result = runner.invoke(app, ["alerts", "add", "no/such", "--type", "burst"])
     assert result.exit_code == 1
-    assert "Repository not tracked" in result.output
+    assert "repository not tracked" in result.output.lower()
+    assert "no/such" in result.output
+    assert "Error:" in result.stderr
 
 
 def test_alert_rule_enable_disable_and_delete() -> None:
