@@ -15,6 +15,7 @@ from config import settings
 from db.alerts import set_delivery_result
 from db.models import AlertDelivery, AlertEvent, NotificationEndpoint
 from observability import metrics
+from security import UnsafeURL, validate_outbound_url
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,11 @@ async def deliver_test_endpoint(
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
         "utf-8"
     )
+    try:
+        validate_outbound_url(endpoint.url)
+    except UnsafeURL as exc:
+        return False, f"blocked target: {exc}"
+
     attempts = max(max_attempts, 1)
     for attempt in range(1, attempts + 1):
         headers = {"Content-Type": "application/json"}
@@ -152,6 +158,29 @@ async def deliver_event(
     if not webhook_url.strip():
         await set_delivery_result(session, event, status="inbox_only")
         return True
+
+    try:
+        validate_outbound_url(webhook_url)
+    except UnsafeURL:
+        await set_delivery_result(
+            session,
+            event,
+            status="failed",
+            error="webhook target address is not allowed",
+        )
+        metrics.increment("webhook_deliveries", labels={"result": "blocked"})
+        logger.warning(
+            "webhook delivery blocked",
+            extra={
+                "event_id": event.id,
+                "endpoint_id": endpoint.id if endpoint else None,
+                "operation": "webhook_delivery",
+                "result": "blocked",
+                "error_category": "unsafe_target",
+                "repository": event.repository_full_name,
+            },
+        )
+        return False
 
     attempts = max(max_attempts, 1)
     for attempt in range(1, attempts + 1):

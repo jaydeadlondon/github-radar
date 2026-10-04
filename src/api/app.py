@@ -97,10 +97,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.middleware("http")(request_logging)
+    wildcard = "*" in settings.cors_origins
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_credentials=not wildcard,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -152,13 +153,52 @@ def _error_payload(request: Request, detail: str, status_code: int) -> dict:
     ).model_dump()
 
 
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+
+
+def _content_length(request: Request) -> int | None:
+    raw = request.headers.get("content-length")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 async def request_logging(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
     request.state.request_id = request_id
     start = time.perf_counter()
+
+    declared_length = _content_length(request)
+    if declared_length is not None and declared_length > settings.max_request_bytes:
+        response = JSONResponse(
+            status_code=413,
+            content=_error_payload(
+                request,
+                f"Request body exceeds RADAR_MAX_REQUEST_BYTES "
+                f"({settings.max_request_bytes} bytes)",
+                413,
+            ),
+        )
+        response.headers["X-Request-ID"] = request_id
+        for header, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        metrics.increment(
+            "http_requests", labels={"method": request.method, "status": 413}
+        )
+        return response
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
     response.headers["X-Request-ID"] = request_id
+    for header, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
     if request.url.path.startswith(settings.api_prefix):
         response.headers["X-API-Version"] = "v1"
         response.headers["X-API-Compatibility"] = "stable"
