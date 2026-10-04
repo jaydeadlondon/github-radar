@@ -391,3 +391,34 @@ async def test_blocked_delivery_logs_the_reason(db_session, monkeypatch, caplog)
     assert blocked, "expected a warning"
     assert "10.1.2.3" in blocked[0].blocked_reason
     assert "rebind.example.com" not in str(getattr(blocked[0], "blocked_reason", ""))
+
+
+def test_the_suite_never_uses_the_host_resolver() -> None:
+    """Webhook delivery in tests must not depend on the machine's DNS.
+
+    ``tests/conftest.py`` pins ``security._resolve`` to a public address. If this
+    test fails, the working tree mixes revisions: with the real resolver, a
+    machine whose DNS answers reserved names with ``0.0.0.0`` or an internal
+    address (NXDOMAIN hijacking by an ISP, router or corporate resolver) blocks
+    deliveries that only go through ``httpx.MockTransport``.
+
+    Fix the checkout, not the product::
+
+        git fetch origin
+        git checkout -f -B <branch> origin/<branch>
+    """
+
+    import ipaddress
+
+    import security
+
+    addresses = security._resolve("hooks.example.test")
+    assert addresses, (
+        "the test suite must pin security._resolve (see tests/conftest.py); "
+        "without it a hijacked resolver changes the outcome of mocked deliveries"
+    )
+    assert all(address.is_global for address in addresses), (
+        f"the pinned resolver returned non-public addresses: {addresses}"
+    )
+    assert all(isinstance(address, ipaddress.IPv4Address | ipaddress.IPv6Address)
+               for address in addresses)
