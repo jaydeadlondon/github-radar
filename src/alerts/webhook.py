@@ -123,7 +123,10 @@ async def deliver_test_endpoint(
         "utf-8"
     )
     try:
-        validate_outbound_url(endpoint.url)
+        validate_outbound_url(
+            endpoint.url,
+            allow_private=settings.webhook_allow_private_addresses,
+        )
     except UnsafeURL as exc:
         return False, f"blocked target: {exc}"
 
@@ -170,8 +173,11 @@ async def deliver_event(
         return True
 
     try:
-        validate_outbound_url(webhook_url)
-    except UnsafeURL:
+        validate_outbound_url(
+            webhook_url,
+            allow_private=settings.webhook_allow_private_addresses,
+        )
+    except UnsafeURL as exc:
         await set_delivery_result(
             session,
             event,
@@ -187,6 +193,9 @@ async def deliver_event(
                 "operation": "webhook_delivery",
                 "result": "blocked",
                 "error_category": "unsafe_target",
+                # The exact reason (for example "resolves to 10.0.0.5") is what
+                # makes an SSRF refusal diagnosable; it never contains the URL.
+                "blocked_reason": str(exc),
                 "repository": event.repository_full_name,
             },
         )
