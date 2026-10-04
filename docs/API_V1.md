@@ -16,6 +16,24 @@ Compatibility guarantees for 1.x:
 - remediation for a broken contract is a code change plus a new snapshot in
   `docs/openapi-v1.json` (checked by `tests/test_api_v1_freeze.py`).
 
+### The snapshot file
+
+`docs/openapi-v1.json` is **generated**, never hand-edited:
+
+```bash
+python scripts/export_openapi.py            # regenerate after an intended change
+python scripts/export_openapi.py --check    # release gate: compare with the live schema
+python scripts/export_openapi.py --check --strict   # also require canonical formatting
+```
+
+`--check` compares **content**, so reformatting the file (an editor, a JSON
+formatter, `prettier`) does not fail the gate — only a real change to paths,
+schemas, status codes or the version does. The comparison reports the first
+differing location, for example
+`$.paths['/api/v1/repos'].get.responses.200`, and the release check runs the
+same command. A content change that is not accompanied by an update to this
+document and a new snapshot is a contract break.
+
 ## Authentication
 
 `X-API-Key` header. Two scopes:
