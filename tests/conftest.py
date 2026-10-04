@@ -18,6 +18,38 @@ def fast_retry_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "backoff_base", 0.01)
 
 
+# Address returned for every webhook hostname during the test session. It must be
+# a globally routable address: Python counts the RFC 5737 documentation ranges
+# (198.51.100.0/24 and friends) as private/reserved, so the SSRF guard would
+# reject them.
+TEST_RESOLVED_ADDRESS = "1.1.1.1"
+
+
+@pytest.fixture(autouse=True)
+def deterministic_webhook_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never consult the host resolver from the test suite.
+
+    The SSRF guard re-resolves webhook hostnames at delivery time. A machine
+    whose DNS answers reserved names (``*.test``, ``*.example``) with ``0.0.0.0``
+    or an internal address - NXDOMAIN hijacking by an ISP, a router or a
+    corporate resolver - would otherwise block deliveries that tests only ever
+    send through ``httpx.MockTransport``, and the failures would look like
+    product bugs. Tests that need a specific answer (private address, empty
+    resolution) patch ``security._resolve`` themselves and win over this
+    fixture, because monkeypatch applies the later patch.
+    """
+
+    import ipaddress
+
+    import security
+
+    monkeypatch.setattr(
+        security,
+        "_resolve",
+        lambda hostname: [ipaddress.ip_address(TEST_RESOLVED_ADDRESS)],
+    )
+
+
 @pytest.fixture
 def client_factory():
     def _make(handler) -> GitHubClient:
