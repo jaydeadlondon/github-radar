@@ -54,6 +54,21 @@ the checklist required for the v1.0 release and records residual risks.
   only the exception class and HTTP status and runs the result through
   `redact_secret`; tokens pasted into a webhook path or query string therefore
   never reach `alert_deliveries.error` or the log file.
+- A refusal records `webhook target address is not allowed` on the event and logs
+  `blocked_reason` (for example `resolves to 10.0.0.5`) so an operator can see
+  why a target was rejected; the URL itself is never logged.
+- `RADAR_WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true` is the documented opt-in for
+  notification bridges on the local network. It relaxes RFC 1918, CGNAT,
+  IPv6 ULA and loopback targets only: link-local (cloud metadata), unspecified,
+  multicast and IPv4-mapped addresses remain blocked, and the process logs a
+  warning at startup. **Residual risk when enabled:** the worker can then reach
+  hosts that are not reachable from the internet, so only enable it when the
+  webhook target is trusted.
+- The test suite never consults the host resolver for webhook targets
+  (`tests/conftest.py` pins `security._resolve` to a public address), so a
+  machine whose DNS rewrites unknown names — NXDOMAIN hijacking by an ISP, a
+  router or a corporate resolver — cannot turn a mocked delivery into a failure
+  and hide a real regression.
 - **Residual risk:** a resolution race between the check and the connection is
   possible in theory (TOCTOU); the redirect ban and the address re-check reduce
   the practical window. For hard isolation, run the worker in a network

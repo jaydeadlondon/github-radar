@@ -33,6 +33,8 @@ policy in `docs/API_V1.md` or land in `/api/v2`.
   `(repo_id, quality_status, observed_at)` snapshot index, SQLite runs in WAL
   mode with `synchronous=NORMAL` and a busy timeout, and `scripts/benchmark.py`
   measures the read paths offline
+- `RADAR_WEBHOOK_ALLOW_PRIVATE_ADDRESSES` (default `false`): explicit opt-in for
+  notification bridges on a private network; cloud metadata addresses stay blocked
 - Test suites for the CLI contract, API v1 freeze, security hardening, dashboard
   UX and performance
 
@@ -51,6 +53,11 @@ policy in `docs/API_V1.md` or land in `/api/v2`.
 
 ### Fixed
 
+- Webhook tests no longer depend on the host resolver: a machine whose DNS
+  rewrites unknown names (NXDOMAIN hijacking) used to fail mocked deliveries that
+  never dial out, because the SSRF guard re-resolved the target at delivery time.
+  The guard is unchanged; the suite now pins the resolver and the refusal reason
+  (`resolves to 10.0.0.5`) is logged so a real block is diagnosable
 - Webhook delivery errors are redacted before they are stored or logged, so
   credentials embedded in an endpoint URL cannot leak into `alert_deliveries`
 - Dashboard theme follows the operating system preference until the visitor

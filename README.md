@@ -439,6 +439,21 @@ RADAR_GITHUB_RATE_LIMIT_WARNING_REMAINING=100
 RADAR_ALERT_WEBHOOK_URL=https://example.com/hooks/github-radar
 ```
 
+Webhook targets are validated before every request: non-HTTP schemes, embedded
+credentials, `localhost`, cloud metadata hostnames and any URL that resolves to a
+private, loopback, link-local or unspecified address are refused (the refusal is
+recorded on the event as a failed delivery and logged with the reason). To send
+notifications to a bridge on your own network — a self-hosted ntfy, Apprise or
+Gotify instance — opt in explicitly:
+
+```bash
+RADAR_WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true
+```
+
+Private and loopback targets are then allowed, while cloud metadata addresses
+(`169.254.169.254`, `0.0.0.0`, link-local IPv6) stay blocked. See
+[docs/SECURITY.md](docs/SECURITY.md) for the residual risks of that setting.
+
 ## Background snapshots and worker lifecycle
 
 The production API is intentionally scheduler-free. Run the scheduler in the
