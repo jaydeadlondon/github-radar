@@ -35,7 +35,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+# Deliberately no sys.path manipulation: the check must report where the
+# installed package actually lives. Adding src/ here would make the
+# "imported from this checkout" check pass even with a stale install.
 
 OK = "ok"
 FAIL = "FAIL"
@@ -100,6 +102,144 @@ def _code_version() -> str:
     from version import __version__
 
     return __version__
+
+
+def _git(*args: str) -> str:
+    result = subprocess.run(
+        ["git", *args], cwd=ROOT, capture_output=True, text=True
+    )
+    return result.stdout.strip()
+
+
+def check_checkout(checker: Checker) -> None:
+    """Make every run state which revision produced the result.
+
+    The most common way to see bogus failures is running a working tree that
+    mixes files from several commits (or an older revision) with a newer venv.
+    Printing the revision and comparing it with ``origin/<branch>`` turns that
+    into a one-line diagnosis instead of a pytest archaeology session.
+    """
+
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD") or "HEAD"
+    revision = _git("rev-parse", "--short", "HEAD")
+    detached = branch == "HEAD"
+    print(f"checkout: {branch if not detached else 'detached HEAD'} @ {revision}")
+
+    if detached:
+        checker.record(
+            "checkout is on the release branch (not a detached HEAD)",
+            False,
+            "run `git checkout -f -B <branch> origin/<branch>` before validating",
+        )
+        return
+
+    dirty = _git("status", "--porcelain", "--untracked-files=no")
+    checker.record(
+        "working tree has no modified tracked files",
+        not dirty,
+        dirty.splitlines()[0] if dirty else "",
+    )
+
+    remote_revision = _git("rev-parse", "--verify", "-q", f"origin/{branch}")
+    if not remote_revision:
+        checker.record(
+            "branch is pushed to origin",
+            False,
+            f"origin/{branch} not found; push the branch or run from the release commit",
+        )
+        return
+    same = remote_revision == _git("rev-parse", "HEAD")
+    checker.record(
+        "checkout matches origin/<branch>",
+        same,
+        ""
+        if same
+        else (
+            f"HEAD is {revision} but origin/{branch} is "
+            f"{remote_revision[:7]}; sync with "
+            f"`git checkout -f -B {branch} origin/{branch}` before running the "
+            "suite - otherwise the failures may describe code you no longer have"
+        ),
+    )
+
+
+def check_import_locations(checker: Checker) -> None:
+    """Every ``src`` module must come from this checkout.
+
+    A non-editable ``pip install .`` leaves a stale copy in site-packages, and
+    then ``pytest`` exercises code that is not in the working tree - the failure
+    output then describes a revision nobody can find.
+    """
+
+    import importlib
+    import importlib.metadata
+
+    modules: dict[str, object] = {}
+    try:
+        for name in ("security", "alerts.webhook", "db.base"):
+            modules[name] = importlib.import_module(name)
+    except ImportError as exc:
+        checker.record(
+            "package is importable in this environment",
+            False,
+            f"{exc} - run `pip install -e \".[dev]\"`",
+        )
+        return
+
+    print("imported from:")
+    for name, module in modules.items():
+        print(f"  {name:<16} {Path(module.__file__).resolve()}")
+
+    outside = {
+        name: str(Path(module.__file__).resolve())
+        for name, module in modules.items()
+        if not Path(module.__file__).resolve().is_relative_to(ROOT)
+    }
+    checker.record(
+        "src modules are imported from this checkout",
+        not outside,
+        (
+            "; ".join(f"{name} -> {path}" for name, path in outside.items())
+            + ' - reinstall with `pip install -e ".[dev]"`'
+            if outside
+            else ""
+        ),
+    )
+
+    editable_root = _editable_project_root()
+    if editable_root is None:
+        print("editable install: not detected (regular install)")
+        return
+    print(f"editable install points at: {editable_root}")
+    checker.record(
+        "editable install points at this checkout",
+        editable_root == ROOT,
+        (
+            f"the venv is installed from {editable_root} but the check runs in "
+            f"{ROOT}; reinstall or run the check from the installed checkout"
+            if editable_root != ROOT
+            else ""
+        ),
+    )
+
+
+def _editable_project_root() -> Path | None:
+    """Where ``pip install -e .`` was run, when that is how the package is set up."""
+
+    import importlib.metadata
+    import json
+
+    try:
+        distribution = importlib.metadata.distribution("github-radar")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    raw = distribution.read_text("direct_url.json")
+    if not raw:
+        return None
+    url = json.loads(raw).get("url", "")
+    if not url.startswith("file://"):
+        return None
+    return Path(url[len("file://") :]).resolve()
 
 
 def check_version_consistency(checker: Checker) -> None:
@@ -318,6 +458,8 @@ def main() -> int:
     checker = Checker()
     print(f"release check: database at {database}\n")
     try:
+        check_checkout(checker)
+        check_import_locations(checker)
         check_version_consistency(checker)
         check_cli_database(checker, env)
         check_api(checker, env)
