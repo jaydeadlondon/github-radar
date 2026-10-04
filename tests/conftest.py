@@ -18,6 +18,21 @@ def fast_retry_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "backoff_base", 0.01)
 
 
+TEST_RESOLVED_ADDRESS = "1.1.1.1"
+
+
+@pytest.fixture(autouse=True)
+def deterministic_webhook_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ipaddress
+    import security
+
+    monkeypatch.setattr(
+        security,
+        "_resolve",
+        lambda hostname: [ipaddress.ip_address(TEST_RESOLVED_ADDRESS)],
+    )
+
+
 @pytest.fixture
 def client_factory():
     def _make(handler) -> GitHubClient:
