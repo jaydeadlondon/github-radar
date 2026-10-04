@@ -120,6 +120,8 @@ class RepoDetailOut(BaseModel):
 class ErrorOut(BaseModel):
     detail: str
     code: int
+    type: str = "error"
+    request_id: str | None = None
 
 
 class RateLimitOut(BaseModel):
