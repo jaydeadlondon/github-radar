@@ -124,7 +124,10 @@ async def post_notification_endpoint(
             status_code=409, detail="notification endpoint already exists"
         )
     try:
-        url = validate_webhook_url(payload.url)
+        url = validate_webhook_url(
+            payload.url,
+            allow_private=settings.webhook_allow_private_addresses,
+        )
     except UnsafeURL as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     endpoint = await create_endpoint(
@@ -156,7 +159,10 @@ async def patch_notification_endpoint(
     fields = payload.model_fields_set
     if "url" in fields and payload.url is not None:
         try:
-            endpoint.url = validate_webhook_url(payload.url)
+            endpoint.url = validate_webhook_url(
+                payload.url,
+                allow_private=settings.webhook_allow_private_addresses,
+            )
         except UnsafeURL as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     if "provider" in fields and payload.provider is not None:

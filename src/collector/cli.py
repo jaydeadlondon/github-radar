@@ -689,8 +689,14 @@ def _run_doctor() -> list[tuple[str, str, str]]:
         from security import UnsafeURL, validate_webhook_url
 
         try:
-            validate_webhook_url(settings.alert_webhook_url)
-            checks.append(("webhook_url", "ok", "configured webhook URL is allowed"))
+            validate_webhook_url(
+                settings.alert_webhook_url,
+                allow_private=settings.webhook_allow_private_addresses,
+            )
+            detail = "configured webhook URL is allowed"
+            if settings.webhook_allow_private_addresses:
+                detail += " (private addresses allowed)"
+            checks.append(("webhook_url", "ok", detail))
         except UnsafeURL as exc:
             checks.append(("webhook_url", "error", str(exc)))
     else:
@@ -2017,10 +2023,13 @@ def notifications_add(
 ) -> None:
     if provider not in {"generic", "slack", "discord"}:
         _fail("provider must be generic, slack or discord", ExitCode.USAGE)
+    from config import settings
     from security import UnsafeURL, validate_webhook_url
 
     try:
-        url = validate_webhook_url(url)
+        url = validate_webhook_url(
+            url, allow_private=settings.webhook_allow_private_addresses
+        )
     except UnsafeURL as exc:
         _fail(str(exc), ExitCode.USAGE)
 
