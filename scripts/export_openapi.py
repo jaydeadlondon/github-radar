@@ -4,10 +4,18 @@
 Run from the repository root::
 
     python scripts/export_openapi.py            # write the snapshot
-    python scripts/export_openapi.py --check    # fail when it is out of date
+    python scripts/export_openapi.py --check    # compare it with the live schema
+    python scripts/export_openapi.py --check --strict   # additionally require
+                                                       # canonical formatting
 
 ``--check`` is part of the release checklist: the API contract must not drift
 without the snapshot being regenerated in the same commit.
+
+The snapshot is a *contract* artefact, so it is compared by content: an editor
+or a JSON formatter that reflows the file must not break the release. Only a
+real change to the document (missing/renamed endpoints, changed schemas,
+different version) fails the check. ``--strict`` adds the byte-for-byte
+formatting check for maintainers who want the file to stay canonically rendered.
 """
 
 from __future__ import annotations
@@ -16,6 +24,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -25,14 +34,109 @@ if str(SRC) not in sys.path:
 SNAPSHOT = ROOT / "docs" / "openapi-v1.json"
 
 
-def build_document() -> dict:
+def build_document() -> dict[str, Any]:
+    """Generate the live OpenAPI document from the FastAPI application."""
+
     from api.app import create_app
 
     return create_app().openapi()
 
 
-def render(document: dict) -> str:
+def render(document: dict[str, Any]) -> str:
+    """Canonical rendering of a document: sorted keys, 2-space indent, LF."""
+
     return json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def canonical(json_text: str) -> str:
+    """Canonical rendering of already serialized JSON (parses first)."""
+
+    return render(json.loads(json_text))
+
+
+def first_difference(left: Any, right: Any, path: str = "$") -> str | None:
+    """Describe the first structural difference between two documents.
+
+    Returns ``None`` when the values are equal, otherwise a JSON-path-like
+    location such as ``$.paths['/api/v1/repos'].get`` so the failure names the
+    exact part of the contract that moved.
+    """
+
+    if isinstance(left, dict) and isinstance(right, dict):
+        for key in sorted(set(left) | set(right)):
+            location = f"{path}.{key}"
+            if key not in left:
+                return f"{location} is missing from the snapshot"
+            if key not in right:
+                return f"{location} is not in the live schema"
+            difference = first_difference(left[key], right[key], location)
+            if difference:
+                return difference
+        return None
+    if isinstance(left, list) and isinstance(right, list):
+        if len(left) != len(right):
+            return (
+                f"{path} has {len(left)} item(s) in the snapshot and "
+                f"{len(right)} in the live schema"
+            )
+        for index, (stored, live) in enumerate(zip(left, right, strict=True)):
+            difference = first_difference(stored, live, f"{path}[{index}]")
+            if difference:
+                return difference
+        return None
+    if type(left) is not type(right):
+        return (
+            f"{path} is {type(left).__name__} in the snapshot and "
+            f"{type(right).__name__} in the live schema"
+        )
+    if left != right:
+        return f"{path} is {left!r} in the snapshot and {right!r} in the live schema"
+    return None
+
+
+def _check(strict: bool) -> int:
+    if not SNAPSHOT.is_file():
+        print(
+            f"{SNAPSHOT.name} is missing; run `python scripts/export_openapi.py`.",
+            file=sys.stderr,
+        )
+        return 1
+
+    live = build_document()
+    live_text = render(live)
+    stored_text = SNAPSHOT.read_text()
+    try:
+        stored = json.loads(stored_text)
+    except json.JSONDecodeError as exc:
+        print(f"docs/openapi-v1.json is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+
+    if stored != live:
+        difference = first_difference(stored, live)
+        print(
+            "docs/openapi-v1.json does not match the live schema: "
+            f"{difference}.\n"
+            "If the contract changed on purpose, update docs/API_V1.md and run "
+            "`python scripts/export_openapi.py`. If only the generated document "
+            "moved, check the installed FastAPI/pydantic versions with "
+            '`pip install -e ".[dev]"`.',
+            file=sys.stderr,
+        )
+        return 1
+
+    if stored_text != live_text:
+        message = (
+            "docs/openapi-v1.json matches the live schema but is not in "
+            "canonical form (whitespace only); run `python scripts/"
+            "export_openapi.py` to normalize it."
+        )
+        if strict:
+            print(message, file=sys.stderr)
+            return 1
+        print(f"note: {message}")
+
+    print("docs/openapi-v1.json matches the live schema.")
+    return 0
 
 
 def main() -> int:
@@ -42,21 +146,17 @@ def main() -> int:
         action="store_true",
         help="Exit with status 1 when the snapshot differs from the live schema.",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="With --check, also fail when the file is not canonically rendered.",
+    )
     arguments = parser.parse_args()
 
-    rendered = render(build_document())
     if arguments.check:
-        current = SNAPSHOT.read_text() if SNAPSHOT.is_file() else ""
-        if current != rendered:
-            print(
-                "docs/openapi-v1.json is out of date; "
-                "run `python scripts/export_openapi.py` and commit the result.",
-                file=sys.stderr,
-            )
-            return 1
-        print("docs/openapi-v1.json matches the live schema.")
-        return 0
+        return _check(arguments.strict)
 
+    rendered = render(build_document())
     SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
     SNAPSHOT.write_text(rendered)
     print(f"Wrote {SNAPSHOT.relative_to(ROOT)}")
