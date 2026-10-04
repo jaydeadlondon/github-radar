@@ -1,5 +1,8 @@
+import logging
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+logger = logging.getLogger(__name__)
 
 class ConfigurationError(ValueError):
     """Raised when a runtime configuration is unsafe or incomplete."""
@@ -52,6 +55,7 @@ class Settings(BaseSettings):
     webhook_disable_after_failures: int = 5
     webhook_signing_secret: str = ""
     webhook_provider: str = "generic"
+    webhook_allow_private_addresses: bool = False
 
     metrics_enabled: bool = True
     log_level: str = "INFO"
@@ -82,6 +86,11 @@ def configuration_warnings(config: Settings | None = None) -> list[str]:
 
 def validate_runtime_configuration(config: Settings | None = None) -> None:
     active = config or settings
+    if active.webhook_allow_private_addresses:
+        logger.warning(
+            "RADAR_WEBHOOK_ALLOW_PRIVATE_ADDRESSES is enabled: webhooks may target "
+            "private or loopback addresses (cloud metadata endpoints stay blocked)"
+        )
     if active.environment.lower() not in {"production", "prod"}:
         return
 
