@@ -84,7 +84,9 @@ async def test_velocity_endpoint_rejects_bad_windows(api_client, db_session):
 async def test_velocity_endpoint_unknown_repo(api_client):
     response = await api_client.get("/api/v1/analytics/velocity/ghost/repo")
     assert response.status_code == 404
-    assert response.json() == {"detail": "repository ghost/repo not found", "code": 404}
+    payload = response.json()
+    assert payload["detail"] == "repository ghost/repo not found"
+    assert payload["code"] == 404
 
 
 async def test_bursts_endpoint_detects_a_spike(api_client, db_session):

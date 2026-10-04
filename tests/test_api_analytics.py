@@ -78,7 +78,7 @@ async def test_velocity_404_for_unknown_repo(api_client):
     response = await api_client.get("/api/v1/analytics/velocity/no/such")
     assert response.status_code == 404
     body = response.json()
-    assert set(body) == {"detail", "code"}
+    assert {"detail", "code"} <= set(body)
 
 
 async def test_velocity_rejects_bad_windows(api_client, db_session):

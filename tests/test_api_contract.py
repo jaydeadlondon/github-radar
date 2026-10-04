@@ -144,9 +144,11 @@ async def test_error_shape_is_consistent(api_client):
         response = await api_client.get(path)
         assert response.status_code == 404, path
         body = response.json()
-        assert set(body) == {"detail", "code"}, path
+        assert {"detail", "code"} <= set(body), path
         assert body["code"] == 404, path
+        assert body["type"] == "not_found", path
         assert isinstance(body["detail"], str), path
+        assert response.headers["X-Request-ID"] == body["request_id"], path
 
 
 async def test_dashboard_static_assets(api_client):
