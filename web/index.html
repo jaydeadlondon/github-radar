@@ -18,6 +18,8 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <div id="live-region" class="sr-only" role="status" aria-live="polite"></div>
     <header class="topbar">
       <div class="brand">
         <svg
@@ -55,6 +57,7 @@
           title="Open alerts"
           aria-label="Open alerts"
           aria-expanded="false"
+          aria-controls="alerts-panel"
         >
           🔔
           <span id="alert-count" class="alert-count" hidden>0</span>
@@ -67,15 +70,16 @@
         >
           🌙
         </button>
-        <span class="status-badge" id="status-badge">loading…</span>
+        <span class="status-badge" id="status-badge" role="status" aria-live="polite">loading…</span>
       </div>
     </header>
-    <main class="content">
+    <main class="content" id="main" tabindex="-1">
       <section class="filters card">
         <input
           id="search"
           type="search"
           placeholder="Search repositories…"
+          aria-label="Search repositories"
           autocomplete="off"
         />
         <select id="language-filter" aria-label="Filter by language">
@@ -129,10 +133,18 @@
           <button id="track-btn" class="btn">Track repository</button>
         </div>
       </section>
-      <section class="card alerts-panel" id="alerts-panel" hidden>
+      <section
+        class="card alerts-panel"
+        id="alerts-panel"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="alerts-title"
+        tabindex="-1"
+        hidden
+      >
         <div class="alerts-head">
           <div>
-            <h2>Alert inbox</h2>
+            <h2 id="alerts-title">Alert inbox</h2>
             <p id="alerts-summary">Loading alert status…</p>
           </div>
           <div class="alerts-actions">
@@ -176,8 +188,8 @@
               <option value="stars_reached">Milestones</option>
             </select>
           </div>
-          <div id="alert-events" class="alert-events">
-            <div class="empty">Loading alerts…</div>
+          <div id="alert-events" class="alert-events" aria-busy="true">
+            <div class="empty" role="status">Loading alerts…</div>
           </div>
         </div>
         <div id="alert-rules-pane" hidden>
@@ -217,23 +229,28 @@
               Create rule
             </button>
           </form>
-          <div id="alert-rules" class="alert-rules">
-            <div class="empty">Loading rules…</div>
+          <div id="alert-rules" class="alert-rules" aria-busy="true">
+            <div class="empty" role="status">Loading rules…</div>
           </div>
         </div>
       </section>
       <section class="grid">
         <div class="card">
-          <h2>Tracked repositories</h2>
-          <div class="table-wrap" id="repos-table-wrap">
-            <div class="empty">Loading…</div>
+          <h2 id="repos-title">Tracked repositories</h2>
+          <div
+            class="table-wrap"
+            id="repos-table-wrap"
+            aria-busy="true"
+            aria-labelledby="repos-title"
+          >
+            <div class="empty" role="status">Loading…</div>
           </div>
         </div>
         <div class="card chart-panel">
           <div class="chart-head">
             <div>
-              <div class="chart-title">Star growth</div>
-              <div class="chart-sub" id="chart-sub">
+              <h2 class="chart-title">Star growth</h2>
+              <div class="chart-sub" id="chart-sub" aria-live="polite">
                 Select a repository to see its history
               </div>
               <div class="badges-row" id="velocity-badges"></div>
@@ -259,13 +276,19 @@
                 <span>Log scale</span>
               </label>
               <button id="reset-zoom" class="btn small">Reset zoom</button>
-              <button id="export-png" class="btn small" title="Save as PNG">
+              <button
+                id="export-png"
+                class="btn small"
+                title="Save as PNG"
+                aria-label="Export chart as PNG"
+              >
                 PNG
               </button>
             </div>
           </div>
           <div class="compare-bar" id="compare-bar" style="display: none"></div>
-          <div id="chart"></div>
+          <div id="chart" role="img" aria-label="Star history chart"></div>
+          <div id="chart-notice" class="chart-sub" role="status" aria-live="polite"></div>
         </div>
         <section class="card full" id="risers-section">
           <div class="section-head">
@@ -276,13 +299,19 @@
               <button data-window="90">90d</button>
             </div>
           </div>
-          <div class="riser-grid" id="riser-grid">
-            <div class="empty">Loading…</div>
+          <div class="riser-grid" id="riser-grid" aria-busy="true">
+            <div class="empty" role="status">Loading…</div>
           </div>
         </section>
       </section>
     </main>
-    <div id="toasts"></div>
+    <div id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+    <noscript>
+      <p class="empty">
+        GitHub Radar needs JavaScript for charts and live data. The REST API
+        under <code>/api/v1</code> stays available without it.
+      </p>
+    </noscript>
     <script src="/vendor/echarts.min.js"></script>
     <script src="/charts.js"></script>
     <script src="/app.js"></script>

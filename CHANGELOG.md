@@ -2,6 +2,67 @@
 
 All notable changes to this project.
 
+## [1.0.0] — 2026-10-01
+
+The first stable release. The public contract — domain model, CLI, REST API v1
+and dashboard — is frozen; breaking changes from here follow the deprecation
+policy in `docs/API_V1.md` or land in `/api/v2`.
+
+### Added
+
+- `docs/CONTRACT_AUDIT.md`, `docs/DOMAIN_MODEL.md`, `docs/API_V1.md` and
+  `docs/SECURITY.md`: the audited public surface, the stable entity model, the
+  frozen API contract and the security review for 1.0
+- Stable CLI output contract: `--output table|json|csv` on every read command
+  (identical keys per format), global `--no-color` / `--quiet`, documented
+  process exit codes and a single JSON document on stdout
+- Database lifecycle commands: `radar db status`, `radar backup`,
+  `radar restore`, `radar prune`, `radar doctor` and `radar db optimize`, plus
+  `radar migrate --check`
+- API v1 error envelope `{detail, code, type, request_id}` with a fixed error
+  type enum, `X-Request-ID` on every response and RFC 3339 UTC datetimes
+- Request hardening: `RADAR_MAX_REQUEST_BYTES` (default 256 KiB, answered with
+  `413`), security headers on every response, and CORS credentials disabled for
+  wildcard origins
+- Outbound URL validation and per-request DNS re-resolution for webhook
+  deliveries, with blocked targets recorded as `delivery_status=failed`
+- Dashboard accessibility: skip link, live regions, `aria-busy`/`aria-sort`,
+  keyboard-navigable cards and table rows, focus return for the alerts panel,
+  reduced-motion support and 560 px/860 px breakpoints
+- Performance work: migration `0007` adds the covering
+  `(repo_id, quality_status, observed_at)` snapshot index, SQLite runs in WAL
+  mode with `synchronous=NORMAL` and a busy timeout, and `scripts/benchmark.py`
+  measures the read paths offline
+- Test suites for the CLI contract, API v1 freeze, security hardening, dashboard
+  UX and performance
+
+### Changed
+
+- `top_growth` now reads only the two boundary snapshots per repository instead
+  of materialising every accepted snapshot in the window (426 ms → 35 ms for
+  200 repositories over 90 days, same ranking)
+- Every ORM datetime is timezone-aware UTC end to end; the CLI prints `...Z`
+- Dashboard numbers and dates follow the visitor's locale and time zone
+- Panel loading, empty and error states share one renderer with a retry action;
+  analytics failures are shown instead of being swallowed
+- Untracking a repository and deleting an alert rule ask for confirmation first
+- Dependency audit runs through `scripts/security_audit.sh` (`pip-audit`
+  included in the dev extra)
+
+### Fixed
+
+- Webhook delivery errors are redacted before they are stored or logged, so
+  credentials embedded in an endpoint URL cannot leak into `alert_deliveries`
+- Dashboard theme follows the operating system preference until the visitor
+  chooses one explicitly
+- Skipped or failed analytics requests no longer leave a stale chart silently in
+  place
+
+### Documentation
+
+- README: database lifecycle, supported schema versions, failed-migration
+  behaviour, "data is never auto-deleted" and snapshot retention
+
 ## [0.9.0] — 2026-10-01
 
 ### Added

@@ -15,6 +15,7 @@ from config import settings
 from db.alerts import set_delivery_result
 from db.models import AlertDelivery, AlertEvent, NotificationEndpoint
 from observability import metrics
+from security import UnsafeURL, redact_secret, validate_outbound_url
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +52,19 @@ def build_provider_payload(event: AlertEvent, provider: str) -> dict[str, Any]:
 
 
 def _delivery_error(exc: httpx.HTTPError) -> str:
+    """Human-readable failure text that never carries credentials.
+
+    Transport errors can embed the request URL, which for a webhook may contain
+    a token in the path or query string.  Only the exception class and status
+    code are kept, and the result is passed through :func:`redact_secret` as a
+    second line of defence before it is stored or logged.
+    """
+
     if isinstance(exc, httpx.HTTPStatusError):
-        return f"HTTP {exc.response.status_code}"
-    return f"{type(exc).__name__}: webhook request failed"
+        message = f"HTTP {exc.response.status_code}"
+    else:
+        message = f"{type(exc).__name__}: webhook request failed"
+    return redact_secret(message, max_length=200)
 
 
 def _retryable(exc: httpx.HTTPError) -> bool:
@@ -111,6 +122,11 @@ async def deliver_test_endpoint(
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
         "utf-8"
     )
+    try:
+        validate_outbound_url(endpoint.url)
+    except UnsafeURL as exc:
+        return False, f"blocked target: {exc}"
+
     attempts = max(max_attempts, 1)
     for attempt in range(1, attempts + 1):
         headers = {"Content-Type": "application/json"}
@@ -152,6 +168,29 @@ async def deliver_event(
     if not webhook_url.strip():
         await set_delivery_result(session, event, status="inbox_only")
         return True
+
+    try:
+        validate_outbound_url(webhook_url)
+    except UnsafeURL:
+        await set_delivery_result(
+            session,
+            event,
+            status="failed",
+            error="webhook target address is not allowed",
+        )
+        metrics.increment("webhook_deliveries", labels={"result": "blocked"})
+        logger.warning(
+            "webhook delivery blocked",
+            extra={
+                "event_id": event.id,
+                "endpoint_id": endpoint.id if endpoint else None,
+                "operation": "webhook_delivery",
+                "result": "blocked",
+                "error_category": "unsafe_target",
+                "repository": event.repository_full_name,
+            },
+        )
+        return False
 
     attempts = max(max_attempts, 1)
     for attempt in range(1, attempts + 1):

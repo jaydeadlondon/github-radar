@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -9,10 +9,43 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    TypeDecorator,
     UniqueConstraint,
     func,
 )
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+class UTCDateTime(TypeDecorator):
+    """A datetime column whose Python values are always timezone-aware UTC.
+
+    SQLite stores datetimes without an offset, so naive values read back from the
+    database were previously serialized without a timezone and interpreted as
+    local time by API/CLI clients. Values are converted to UTC before they are
+    written and tagged as UTC when they are read; the on-disk representation is
+    unchanged.
+    """
+
+    impl = DateTime
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect):
+        return dialect.type_descriptor(DateTime(timezone=True))
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 class Base(DeclarativeBase):
@@ -21,10 +54,10 @@ class Base(DeclarativeBase):
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -44,10 +77,10 @@ class Repository(TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text)
     html_url: Mapped[str] = mapped_column(String(500))
     language: Mapped[str | None] = mapped_column(String(64))
-    github_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    github_pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    github_created_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    github_pushed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     default_branch: Mapped[str | None] = mapped_column(String(255))
-    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     tracking_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="1", nullable=False
@@ -57,13 +90,13 @@ class Repository(TimestampMixin, Base):
     )
     tracking_label: Mapped[str | None] = mapped_column(String(100))
     last_successful_snapshot_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
+        UTCDateTime()
     )
     last_snapshot_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
+        UTCDateTime()
     )
     last_snapshot_error: Mapped[str | None] = mapped_column(Text)
-    next_snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_snapshot_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     snapshots: Mapped[list["RepoSnapshot"]] = relationship(
         back_populates="repository",
@@ -87,7 +120,7 @@ class RepoSnapshot(TimestampMixin, Base):
     forks_count: Mapped[int] = mapped_column(Integer, default=0)
     open_issues_count: Mapped[int] = mapped_column(Integer, default=0)
     observed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        UTCDateTime(), server_default=func.now(), index=True
     )
 
     quality_status: Mapped[str] = mapped_column(
@@ -100,6 +133,14 @@ class RepoSnapshot(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_repo_snapshots_repo_id_observed_at", "repo_id", "observed_at"),
         Index("ix_repo_snapshots_quality_status", "quality_status"),
+        # Analytics always filter by repository, accepted quality and a time
+        # window (migration 0007); this keeps that read index-only.
+        Index(
+            "ix_repo_snapshots_repo_quality_observed",
+            "repo_id",
+            "quality_status",
+            "observed_at",
+        ),
     )
 
 
@@ -109,10 +150,10 @@ class JobLock(Base):
     name: Mapped[str] = mapped_column(String(128), primary_key=True)
     owner_id: Mapped[str] = mapped_column(String(128), nullable=False)
     acquired_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+        UTCDateTime(), nullable=False
     )
     expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+        UTCDateTime(), nullable=False
     )
 
     __table_args__ = (Index("ix_job_locks_expires_at", "expires_at"),)
@@ -129,9 +170,9 @@ class SnapshotJob(TimestampMixin, Base):
     job_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="running")
     started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+        UTCDateTime(), nullable=False
     )
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     total_repositories: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     succeeded_repositories: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False
@@ -153,7 +194,7 @@ class AlertRule(TimestampMixin, Base):
     window_days: Mapped[int | None] = mapped_column(Integer)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     last_value: Mapped[float | None] = mapped_column(Float)
-    last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     repository: Mapped["Repository"] = relationship(back_populates="alert_rules")
     events: Mapped[list["AlertEvent"]] = relationship(
@@ -176,8 +217,8 @@ class NotificationEndpoint(TimestampMixin, Base):
     signing_secret: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     failure_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    disabled_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    last_delivery_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     last_error: Mapped[str | None] = mapped_column(Text)
 
     deliveries: Mapped[list["AlertDelivery"]] = relationship(
@@ -210,7 +251,7 @@ class AlertEvent(TimestampMixin, Base):
     message: Mapped[str] = mapped_column(Text)
     current_value: Mapped[float | None] = mapped_column(Float)
     threshold: Mapped[float | None] = mapped_column(Float)
-    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acknowledged_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     delivery_status: Mapped[str] = mapped_column(
         String(24), default="inbox_only", server_default="inbox_only"
     )
@@ -242,10 +283,10 @@ class AlertDelivery(TimestampMixin, Base):
     response_status: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text)
     attempted_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+        UTCDateTime(), nullable=False
     )
-    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    next_attempt_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     event: Mapped["AlertEvent"] = relationship(back_populates="deliveries")
     endpoint: Mapped["NotificationEndpoint | None"] = relationship(

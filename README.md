@@ -4,8 +4,11 @@ Analytics service that tracks rising stars on GitHub: it collects data about
 repositories, builds star-growth history, and detects projects that are
 "taking off" before everyone else.
 
-> **Status:** version 0.9 — independently deployable API/worker services, durable jobs and
-> webhook delivery, scoped API keys, operational diagnostics and structured observability.
+> **Status:** version 1.0 — the public contract (domain model, CLI, REST API v1 and
+> dashboard) is frozen. Independently deployable API/worker services, durable jobs and
+> webhook delivery, scoped API keys, an audited security posture and a documented
+> database lifecycle. Breaking changes now require an `/api/v2` namespace or the
+> deprecation policy in [docs/API_V1.md](docs/API_V1.md).
 
 ## Features
 
@@ -117,7 +120,7 @@ radar notifications deliveries --limit 20
 radar quota
 radar worker --once
 
-## Deployment (v0.9)
+## Deployment (v1.0)
 
 ### Docker Compose: documented single-command startup
 
@@ -200,6 +203,74 @@ volume.
 - **Authentication failures:** `401` means no key was supplied and `403` means
   the supplied key is invalid or lacks the admin scope. `/health`, `/ready` and
   `/metrics` are intentionally public diagnostics.
+
+## Database lifecycle
+
+Everything that touches the schema goes through the CLI; the API and worker
+never migrate on startup (there is a test that fails if they ever try). The
+supported path is **SQLite**; the schema itself is portable to PostgreSQL, but
+only SQLite is part of the 1.0 compatibility promise.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `radar db status` | Location, backend, schema revision vs. head, row counts and file size. Works on a missing database (reports `exists=false`). |
+| `radar init-db` | Creates the SQLite file and stamps it at head. Safe on an existing database: it never drops data. |
+| `radar migrate` | Runs Alembic to head. `radar migrate --check` reports drift without writing (`0` = up to date, `4` = migration needed or database missing). |
+| `radar backup [DEST]` | Online SQLite backup to `radar-backup-<UTC timestamp>.db` (or a directory you name). Uses the SQLite backup API, so writers do not need to stop. |
+| `radar restore FILE [--force] [--yes]` | Replaces the current database and keeps `<db>.pre-restore-<UTC timestamp>.bak`. Refuses to touch a live database without `--force`. |
+| `radar prune [--dry-run] [--keep-days N] [--keep-min-per-repo N]` | Deletes **snapshots** older than the retention window, always keeping a configurable minimum per repository. Never touches repositories, alert rules, alert events or notification endpoints. |
+| `radar doctor` | Read-only configuration, connectivity and schema diagnostics. |
+| `radar db optimize` | Refreshes SQLite planner statistics (`PRAGMA optimize`); also runs on API/worker shutdown. |
+
+### Supported schema versions and upgrade path
+
+- One migration head per release; at 1.0 the head is **0007**.
+- Upgrade with `radar backup`, then `radar migrate`, then `radar db status`.
+  Migrations are additive: no step in the 0001 → 0007 chain deletes or rewrites
+  user rows, and the test suite upgrades a populated v0.3 (0003) database and a
+  v0.6 (0006) database to head and verifies that repositories and snapshots
+  survive unchanged.
+- `radar migrate --check` exits `4` when the database is missing or behind, so a
+  deployment script can gate on it before starting the API.
+- Downgrades are not part of the contract. Each migration does define
+  `downgrade()` for development, but no downgrade path is validated or
+  supported.
+
+### Failed migrations
+
+Alembic runs each migration in a transaction. If a step fails:
+
+1. the process exits with code `4` (`ExitCode.DATABASE`) and prints the failing
+   revision — no traceback;
+2. the transaction rolls back, leaving the previous revision intact;
+3. `radar db status` still reports the old revision, so the schema is ready to
+   retry after the cause is fixed.
+
+The API refuses to serve data from a schema that is not at head: `/ready`
+returns `503` until `radar migrate` has been run.
+
+### Data is never auto-deleted
+
+- `init-db`, `migrate`, `backup`, `restore` and `db optimize` never delete data.
+- `restore` moves the previous database aside as `.pre-restore-<timestamp>.bak`
+  instead of removing it.
+- `prune` is the only command that deletes anything, only snapshots, only with
+  the retention window you pass, and it prints exactly what it would delete.
+  `radar prune --dry-run -o json` reports the cutoff and the counts without
+  writing.
+- Removing a repository from tracking (`radar repos remove`, dashboard "Stop")
+  keeps its snapshots; only an explicit `radar prune` ages them out.
+
+### Snapshot retention
+
+Snapshots are the only table that grows without bound (one row per repository
+per collection run). The default retention keeps 365 days and at least 30
+snapshots per repository, so charts keep working after a prune. A weekly
+`radar prune` (cron, `docker compose run --rm radar-worker radar prune`) keeps a
+multi-year installation around a few hundred megabytes; see
+`scripts/benchmark.py` for the size of a representative dataset.
 
 ## REST API
 
@@ -435,8 +506,23 @@ The frontend is plain HTML/CSS/JS with ECharts bundled locally in
 The test suite preserves the 0.5–0.8 analytics/API/alert coverage and adds
 tracking migrations, data-quality validation, collection status, backfill,
 export, tracking API/CLI, worker locking, job lifecycle, notification delivery,
-authentication, operational endpoints, OpenAPI contract checks and v0.7→v0.9
-upgrade coverage.
+authentication, operational endpoints, OpenAPI contract checks, CLI/API v1
+contract freezes, security hardening, dashboard accessibility and performance
+guards, end-to-end database lifecycle checks, and v0.3→1.0 / v0.6→1.0 upgrade
+coverage.
+
+For the complete release checklist (version consistency, migrations on a
+throwaway database, API smoke test, formats, security audit) run:
+
+```bash
+.venv/bin/python scripts/release_check.py
+```
+
+For an offline performance snapshot of the analytics reads:
+
+```bash
+.venv/bin/python scripts/benchmark.py --repos 200 --days 240 --plans
+```
 
 ```bash
 pip install -e ".[dev]"

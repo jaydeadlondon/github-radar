@@ -4,8 +4,9 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Final
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from data_quality import SnapshotQuality, inspect_snapshot, normalize_utc
 from db.models import Repository, RepoSnapshot
@@ -240,48 +241,81 @@ async def top_growth(
     *,
     limit: int = 10,
 ) -> list[tuple[Repository, int]]:
-    rows = await session.execute(
-        select(Repository, RepoSnapshot)
-        .join(
-            RepoSnapshot,
-            and_(
-                RepoSnapshot.repo_id == Repository.id,
-                RepoSnapshot.quality_status.in_(ACCEPTED_QUALITY_STATUSES),
-            ),
+    """Repositories with the largest star growth inside a window.
+
+    The window boundaries are computed per repository in SQL and only the two
+    boundary snapshots per repository are loaded, so the cost of the query is
+    proportional to the number of tracked repositories instead of the number of
+    snapshots stored (the previous implementation materialised every snapshot
+    in the window as an ORM object).
+    """
+
+    since = normalize_utc(since)
+    boundaries = (
+        select(
+            RepoSnapshot.repo_id.label("repo_id"),
+            func.min(RepoSnapshot.observed_at).label("first_at"),
+            func.max(RepoSnapshot.observed_at).label("last_at"),
         )
+        .join(Repository, Repository.id == RepoSnapshot.repo_id)
         .where(
             Repository.tracking_enabled.is_(True),
-            RepoSnapshot.observed_at >= normalize_utc(since),
+            RepoSnapshot.quality_status.in_(ACCEPTED_QUALITY_STATUSES),
+            RepoSnapshot.observed_at >= since,
         )
-        .order_by(Repository.id, RepoSnapshot.observed_at, RepoSnapshot.id)
+        .group_by(RepoSnapshot.repo_id)
     )
-    deltas: dict[int, tuple[Repository, int, int, int, int]] = {}
-    for repo, snapshot in rows:
-        if repo.id not in deltas:
-            deltas[repo.id] = (
-                repo,
-                snapshot.stargazers_count,
-                snapshot.stargazers_count,
-                snapshot.stargazers_count,
-                snapshot.forks_count,
-            )
-        else:
-            stored, first_stars, _, _, _ = deltas[repo.id]
-            deltas[repo.id] = (
-                stored,
-                first_stars,
-                snapshot.stargazers_count,
-                snapshot.stargazers_count,
-                snapshot.forks_count,
-            )
-    for repo, _first, _last, latest_stars, latest_forks in deltas.values():
-        repo.latest_stargazers = latest_stars
-        repo.latest_forks = latest_forks
-    ranked = sorted(
-        ((repo, last - first) for repo, first, last, _ls, _lf in deltas.values()),
-        key=lambda item: item[1],
-        reverse=True,
+    edges = list(await session.execute(boundaries))
+    if not edges:
+        return []
+
+    pairs = [
+        (row.repo_id, moment)
+        for row in edges
+        for moment in (row.first_at, row.last_at)
+    ]
+    # ``(repo_id, observed_at) IN ((..), (..))`` resolves to one index seek per
+    # pair on SQLite and PostgreSQL alike; ordering by id preserves the historic
+    # tie-break when two snapshots share a timestamp.
+    stmt = (
+        select(
+            RepoSnapshot.repo_id,
+            RepoSnapshot.observed_at,
+            RepoSnapshot.stargazers_count,
+            RepoSnapshot.forks_count,
+        )
+        .where(
+            RepoSnapshot.quality_status.in_(ACCEPTED_QUALITY_STATUSES),
+            tuple_(RepoSnapshot.repo_id, RepoSnapshot.observed_at).in_(pairs),
+        )
+        .order_by(RepoSnapshot.repo_id, RepoSnapshot.observed_at, RepoSnapshot.id)
     )
+    first: dict[int, tuple[RepoSnapshot, ...]] = {}
+    last: dict[int, tuple[RepoSnapshot, ...]] = {}
+    for repo_id, observed_at, stars, forks in await session.execute(stmt):
+        last[repo_id] = (observed_at, stars, forks)
+        first.setdefault(repo_id, (observed_at, stars, forks))
+
+    repo_ids = [row.repo_id for row in edges]
+    repositories = {
+        repo.id: repo
+        for repo in (
+            await session.scalars(
+                select(Repository).where(Repository.id.in_(repo_ids))
+            )
+        ).all()
+    }
+    ranked: list[tuple[Repository, int]] = []
+    for repo_id in repo_ids:
+        repo = repositories.get(repo_id)
+        edge_first = first.get(repo_id)
+        edge_last = last.get(repo_id)
+        if repo is None or edge_first is None or edge_last is None:
+            continue
+        repo.latest_stargazers = edge_last[1]
+        repo.latest_forks = edge_last[2]
+        ranked.append((repo, edge_last[1] - edge_first[1]))
+    ranked.sort(key=lambda item: item[1], reverse=True)
     return ranked[:limit]
 
 
@@ -297,6 +331,11 @@ async def fetch_histories(
         return {}
     stmt = (
         select(RepoSnapshot)
+        # Analytics only ever read the timestamp and the star count; loading
+        # just those columns keeps large windows cheap without changing the
+        # callers, which still receive RepoSnapshot instances.
+        .options(load_only(RepoSnapshot.repo_id, RepoSnapshot.observed_at,
+                           RepoSnapshot.stargazers_count))
         .where(
             RepoSnapshot.repo_id.in_(ids),
             RepoSnapshot.observed_at >= normalize_utc(since),

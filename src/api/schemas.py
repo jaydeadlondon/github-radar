@@ -118,8 +118,16 @@ class RepoDetailOut(BaseModel):
 
 
 class ErrorOut(BaseModel):
+    """Stable v1 error envelope.
+
+    ``detail`` and ``code`` are guaranteed; ``type`` and ``request_id`` are
+    additive diagnostics. Clients must ignore fields they do not know.
+    """
+
     detail: str
     code: int
+    type: str = "error"
+    request_id: str | None = None
 
 
 class RateLimitOut(BaseModel):

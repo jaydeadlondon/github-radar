@@ -91,7 +91,9 @@ async def test_series_endpoint_validates_parameters(api_client, db_session):
 async def test_series_endpoint_unknown_repo(api_client):
     response = await api_client.get("/api/v1/analytics/series/ghost/repo")
     assert response.status_code == 404
-    assert response.json() == {"detail": "repository ghost/repo not found", "code": 404}
+    payload = response.json()
+    assert payload["detail"] == "repository ghost/repo not found"
+    assert payload["code"] == 404
 
 
 async def test_compare_endpoint_aligns_two_repositories(api_client, db_session):

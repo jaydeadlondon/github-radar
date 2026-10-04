@@ -50,10 +50,14 @@ class DashboardStaticFiles(StaticFiles):
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:
             if exc.status_code == 404:
+                request_id = (scope.get("state") or {}).get("request_id")
                 return JSONResponse(
                     status_code=404,
                     content=ErrorOut(
-                        detail=f"Not found: /{path}", code=404
+                        detail=f"Not found: /{path}",
+                        code=404,
+                        type="not_found",
+                        request_id=request_id,
                     ).model_dump(),
                 )
             raise
@@ -82,6 +86,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if scheduler is not None:
         scheduler.shutdown(wait=False)
 
+    # Refresh planner statistics while the database is still open; this is the
+    # maintenance window SQLite recommends for PRAGMA optimize.
+    from db.base import optimize_database
+
+    await optimize_database()
     await engine.dispose()
 
 
@@ -93,10 +102,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.middleware("http")(request_logging)
+    wildcard = "*" in settings.cors_origins
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        # Browsers reject wildcard origins combined with credentials, and the
+        # API authenticates with a header rather than cookies, so credentials
+        # are only enabled for an explicit origin list.
+        allow_credentials=not wildcard,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -121,12 +134,81 @@ def create_app() -> FastAPI:
     return app
 
 
+def _error_type(status_code: int) -> str:
+    """Machine-readable error class for the v1 error envelope."""
+
+    return {
+        400: "bad_request",
+        401: "auth_required",
+        403: "forbidden",
+        404: "not_found",
+        405: "method_not_allowed",
+        409: "conflict",
+        413: "payload_too_large",
+        422: "validation_error",
+        429: "rate_limited",
+        500: "internal_error",
+        502: "upstream_error",
+        503: "unavailable",
+    }.get(status_code, "error")
+
+
+def _error_payload(request: Request, detail: str, status_code: int) -> dict:
+    request_id = getattr(request.state, "request_id", None)
+    return ErrorOut(
+        detail=detail,
+        code=status_code,
+        type=_error_type(status_code),
+        request_id=request_id,
+    ).model_dump()
+
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+
+
+def _content_length(request: Request) -> int | None:
+    raw = request.headers.get("content-length")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 async def request_logging(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    # The handlers below need the id while the request is still in flight, so it
+    # is attached to the request state before the call.
+    request.state.request_id = request_id
     start = time.perf_counter()
+
+    declared_length = _content_length(request)
+    if declared_length is not None and declared_length > settings.max_request_bytes:
+        response = JSONResponse(
+            status_code=413,
+            content=_error_payload(
+                request,
+                f"Request body exceeds RADAR_MAX_REQUEST_BYTES "
+                f"({settings.max_request_bytes} bytes)",
+                413,
+            ),
+        )
+        response.headers["X-Request-ID"] = request_id
+        for header, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        metrics.increment("http_requests", labels={"method": request.method, "status": 413})
+        return response
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
     response.headers["X-Request-ID"] = request_id
+    for header, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
     if request.url.path.startswith(settings.api_prefix):
         response.headers["X-API-Version"] = "v1"
         response.headers["X-API-Compatibility"] = "stable"
@@ -159,7 +241,8 @@ async def _http_exception_handler(
         detail = str(detail)
     return JSONResponse(
         status_code=exc.status_code,
-        content=ErrorOut(detail=detail, code=exc.status_code).model_dump(),
+        content=_error_payload(request, detail, exc.status_code),
+        headers=dict(getattr(exc, "headers", None) or {}),
     )
 
 
@@ -177,7 +260,7 @@ async def _validation_exception_handler(
     )
     return JSONResponse(
         status_code=422,
-        content=ErrorOut(detail="Request validation failed", code=422).model_dump(),
+        content=_error_payload(request, "Request validation failed", 422),
     )
 
 
@@ -187,5 +270,5 @@ async def _unhandled_exception_handler(
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content=ErrorOut(detail="Internal server error", code=500).model_dump(),
+        content=_error_payload(request, "Internal server error", 500),
     )

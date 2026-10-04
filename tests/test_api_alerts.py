@@ -116,10 +116,10 @@ async def test_create_all_rule_types_and_exact_contract(api_client) -> None:
 async def test_rule_creation_requires_tracked_repository(api_client) -> None:
     response = await _post_rule(api_client)
     assert response.status_code == 404
-    assert response.json() == {
-        "detail": "repository acme/rocket not found",
-        "code": 404,
-    }
+    payload = response.json()
+    assert payload["detail"] == "repository acme/rocket not found"
+    assert payload["code"] == 404
+    assert payload["type"] == "not_found"
 
 
 async def test_rule_condition_combinations_are_validated(api_client) -> None:
@@ -257,8 +257,12 @@ async def test_unknown_rule_and_event_use_existing_error_shape(api_client) -> No
     rule = await api_client.get("/api/v1/alerts/rules/999")
     event = await api_client.get("/api/v1/alerts/events/999")
     assert rule.status_code == event.status_code == 404
-    assert rule.json() == {"detail": "alert rule 999 not found", "code": 404}
-    assert event.json() == {"detail": "alert event 999 not found", "code": 404}
+    payload = rule.json()
+    assert payload["detail"] == "alert rule 999 not found"
+    assert payload["code"] == 404
+    payload = event.json()
+    assert payload["detail"] == "alert event 999 not found"
+    assert payload["code"] == 404
 
 
 async def test_rule_and_event_outputs_never_expose_webhook_url(

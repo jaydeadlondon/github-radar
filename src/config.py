@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     github_token: str = ""
     api_base_url: str = "https://api.github.com"
     request_timeout: float = 30.0
-    user_agent: str = "github-radar/0.9"
+    user_agent: str = "github-radar/1.0"
     max_retries: int = 3
     backoff_base: float = 1.0
     backoff_max: float = 60.0
@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     api_auth_enabled: bool = False
     api_key: str = ""
     admin_api_key: str = ""
+    max_request_bytes: int = 262_144
 
     analytics_rolling_window: int = 14
     analytics_burst_z: float = 2.5
@@ -74,6 +75,8 @@ def configuration_warnings(config: Settings | None = None) -> list[str]:
         warnings.append("webhook max attempts must be at least 1")
     if active.environment.lower() in {"production", "prod"} and not active.github_token:
         warnings.append("GitHub token is not configured")
+    if active.max_request_bytes < 1024:
+        warnings.append("request size limit is unusually small")
     return warnings
 
 
