@@ -236,3 +236,158 @@ def test_delivery_errors_cannot_carry_credentials() -> None:
         "server error", request=request, response=response
     )
     assert _delivery_error(status_error) == "HTTP 503"
+
+def test_allow_private_addresses_keeps_metadata_blocked() -> None:
+    """The opt-in relaxes RFC 1918/loopback targets, never SSRF metadata ones."""
+
+    assert validate_webhook_url("http://192.168.1.50:8080/hook", allow_private=True)
+    assert validate_webhook_url("http://127.0.0.1:8080/hook", allow_private=True)
+    assert validate_outbound_url("http://10.0.0.5/hook", allow_private=True)
+
+    for url in (
+        "http://169.254.169.254/latest/meta-data/",
+        "http://[fe80::1]/hook",
+        "http://0.0.0.0/hook",
+        "http://metadata.google.internal/computeMetadata/v1/",
+    ):
+        with pytest.raises(UnsafeURL):
+            validate_webhook_url(url, allow_private=True)
+
+
+def test_private_targets_are_rejected_without_the_opt_in() -> None:
+    with pytest.raises(UnsafeURL):
+        validate_webhook_url("http://192.168.1.50:8080/hook")
+
+
+async def test_delivery_ignores_the_host_resolver(db_session, monkeypatch) -> None:
+    """A hostile local resolver must not decide the outcome of a mocked delivery.
+
+    This reproduces the failure mode of a machine whose DNS answers reserved
+    names with 0.0.0.0 or an internal address (NXDOMAIN hijacking): the suite
+    must stay green because it never dials out.
+    """
+
+    import socket
+
+    import httpx
+
+    from alerts.webhook import deliver_event
+    from db.models import AlertEvent
+
+    def hostile_getaddrinfo(*_args, **_kwargs):
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("0.0.0.0", 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.7.7", 0)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", hostile_getaddrinfo)
+
+    event = AlertEvent(
+        rule_id=None,
+        repo_id=None,
+        repository_full_name="acme/rocket",
+        kind="stars_reached",
+        fingerprint="fp-hostile-dns",
+        title="Test",
+        message="Test",
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(event)
+    await db_session.flush()
+
+    delivered = await deliver_event(
+        db_session,
+        event,
+        webhook_url="https://hooks.example.test/radar",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
+    )
+
+    assert delivered is True
+    assert event.delivery_status == "sent"
+
+
+async def test_private_target_is_allowed_when_opted_in(
+    db_session, monkeypatch
+) -> None:
+    """A self-hosted bridge on the LAN works with the documented opt-in."""
+
+    import httpx
+
+    import security
+    from alerts.webhook import deliver_event
+    from config import settings
+    from db.models import AlertEvent
+
+    monkeypatch.setattr(settings, "webhook_allow_private_addresses", True)
+    monkeypatch.setattr(
+        security, "_resolve", lambda hostname: [ipaddress.ip_address("10.0.0.9")]
+    )
+
+    event = AlertEvent(
+        rule_id=None,
+        repo_id=None,
+        repository_full_name="acme/rocket",
+        kind="stars_reached",
+        fingerprint="fp-lan",
+        title="Test",
+        message="Test",
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(event)
+    await db_session.flush()
+
+    delivered = await deliver_event(
+        db_session,
+        event,
+        webhook_url="http://10.0.0.9:8080/hook",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200)),
+    )
+
+    assert delivered is True
+    assert event.delivery_status == "sent"
+
+
+async def test_blocked_delivery_logs_the_reason(db_session, monkeypatch, caplog) -> None:
+    """The refusal reason must be diagnosable from the logs."""
+
+    import logging
+
+    import httpx
+
+    import security
+    from alerts.webhook import deliver_event
+    from config import settings
+    from db.models import AlertEvent
+
+    monkeypatch.setattr(settings, "webhook_allow_private_addresses", False)
+    monkeypatch.setattr(
+        security, "_resolve", lambda hostname: [ipaddress.ip_address("10.1.2.3")]
+    )
+
+    event = AlertEvent(
+        rule_id=None,
+        repo_id=None,
+        repository_full_name="acme/rocket",
+        kind="stars_reached",
+        fingerprint="fp-log-reason",
+        title="Test",
+        message="Test",
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(event)
+    await db_session.flush()
+
+    with caplog.at_level(logging.WARNING, logger="alerts.webhook"):
+        delivered = await deliver_event(
+            db_session,
+            event,
+            webhook_url="https://rebind.example.com/hook",
+            transport=httpx.MockTransport(lambda _request: httpx.Response(200)),
+        )
+
+    assert delivered is False
+    assert event.delivery_error == "webhook target address is not allowed"
+    blocked = [record for record in caplog.records if record.message == "webhook delivery blocked"]
+    assert blocked, "expected a warning"
+    assert "10.1.2.3" in blocked[0].blocked_reason
+    assert "rebind.example.com" not in str(getattr(blocked[0], "blocked_reason", ""))
