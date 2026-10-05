@@ -86,6 +86,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if scheduler is not None:
         scheduler.shutdown(wait=False)
 
+    from db.base import optimize_database
+
+    await optimize_database()
     await engine.dispose()
 
 

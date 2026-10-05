@@ -391,6 +391,24 @@ def db_status(
     )
 
 
+@db_app.command("optimize")
+def db_optimize() -> None:
+    from db.base import engine, optimize_database
+    from db.lifecycle import database_state
+
+    state = database_state()
+    if not state.exists or not state.schema_present:
+        _fail(
+            "Database is not initialised. Run `radar init-db` or `radar migrate`.",
+            ExitCode.DATABASE,
+        )
+    _run_async(optimize_database)
+    _info(
+        f"Optimised {engine.url.get_backend_name()} statistics for "
+        f"{state.location or state.url}"
+    )
+
+
 @app.command()
 def backup(
     destination: str | None = typer.Argument(
