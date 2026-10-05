@@ -15,7 +15,7 @@ from config import settings
 from db.alerts import set_delivery_result
 from db.models import AlertDelivery, AlertEvent, NotificationEndpoint
 from observability import metrics
-from security import UnsafeURL, validate_outbound_url
+from security import UnsafeURL, redact_secret, validate_outbound_url
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,10 @@ def _delivery_error(exc: httpx.HTTPError) -> str:
 
 def _retryable(exc: httpx.HTTPError) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code == 429 or exc.response.status_code >= 500
-    return True
+        message = f"HTTP {exc.response.status_code}"
+    else:
+        message = f"{type(exc).__name__}: webhook request failed"
+    return redact_secret(message, max_length=200)
 
 
 def _signature(body: bytes, secret: str) -> str:

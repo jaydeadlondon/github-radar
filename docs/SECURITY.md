@@ -50,6 +50,10 @@ the checklist required for the v1.0 release and records residual risks.
   the delivery into the internal network.
 - Names that fail to resolve are left to the HTTP client, which fails closed
   with a transport error.
+- Delivery failures are stored and logged through `_delivery_error`, which keeps
+  only the exception class and HTTP status and runs the result through
+  `redact_secret`; tokens pasted into a webhook path or query string therefore
+  never reach `alert_deliveries.error` or the log file.
 - **Residual risk:** a resolution race between the check and the connection is
   possible in theory (TOCTOU); the redirect ban and the address re-check reduce
   the practical window. For hard isolation, run the worker in a network
