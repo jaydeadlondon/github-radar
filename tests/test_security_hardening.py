@@ -8,7 +8,12 @@ import pytest
 
 from api.app import SECURITY_HEADERS
 from config import ConfigurationError, Settings, validate_runtime_configuration
-from security import UnsafeURL, redact_secret, validate_outbound_url, validate_webhook_url
+from security import (
+    UnsafeURL,
+    redact_secret,
+    validate_outbound_url,
+    validate_webhook_url,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -199,7 +204,8 @@ def test_dashboard_assets_are_offline() -> None:
         for line in source.splitlines():
             lowered = line.lower()
             if "https://" in lowered and any(
-                marker in lowered for marker in ('src="http', "href=\"http", "@import url(http")
+                marker in lowered
+                for marker in ('src="http', 'href="http', "@import url(http")
             ):
                 raise AssertionError(f"remote asset reference in {relative}: {line}")
 
@@ -215,7 +221,8 @@ def test_delivery_errors_cannot_carry_credentials() -> None:
     from alerts.webhook import _delivery_error
 
     request = httpx.Request(
-        "POST", "https://hooks.example.com/services/ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+        "POST",
+        "https://hooks.example.com/services/ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345",
     )
     transport_error = httpx.ConnectError("unreachable", request=request)
     message = _delivery_error(transport_error)
@@ -228,6 +235,7 @@ def test_delivery_errors_cannot_carry_credentials() -> None:
         "server error", request=request, response=response
     )
     assert _delivery_error(status_error) == "HTTP 503"
+
 
 def test_allow_private_addresses_keeps_metadata_blocked() -> None:
     assert validate_webhook_url("http://192.168.1.50:8080/hook", allow_private=True)
@@ -289,9 +297,7 @@ async def test_delivery_ignores_the_host_resolver(db_session, monkeypatch) -> No
     assert event.delivery_status == "sent"
 
 
-async def test_private_target_is_allowed_when_opted_in(
-    db_session, monkeypatch
-) -> None:
+async def test_private_target_is_allowed_when_opted_in(db_session, monkeypatch) -> None:
     import httpx
 
     import security
@@ -328,7 +334,9 @@ async def test_private_target_is_allowed_when_opted_in(
     assert event.delivery_status == "sent"
 
 
-async def test_blocked_delivery_logs_the_reason(db_session, monkeypatch, caplog) -> None:
+async def test_blocked_delivery_logs_the_reason(
+    db_session, monkeypatch, caplog
+) -> None:
     import logging
 
     import httpx
@@ -366,7 +374,11 @@ async def test_blocked_delivery_logs_the_reason(db_session, monkeypatch, caplog)
 
     assert delivered is False
     assert event.delivery_error == "webhook target address is not allowed"
-    blocked = [record for record in caplog.records if record.message == "webhook delivery blocked"]
+    blocked = [
+        record
+        for record in caplog.records
+        if record.message == "webhook delivery blocked"
+    ]
     assert blocked, "expected a warning"
     assert "10.1.2.3" in blocked[0].blocked_reason
     assert "rebind.example.com" not in str(getattr(blocked[0], "blocked_reason", ""))

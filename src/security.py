@@ -77,7 +77,9 @@ def validate_webhook_url(value: str, *, allow_private: bool = False) -> str:
         address = ipaddress.ip_address(hostname)
     except ValueError:
         address = None
-    if address is not None and _is_blocked_address(address, allow_private=allow_private):
+    if address is not None and _is_blocked_address(
+        address, allow_private=allow_private
+    ):
         raise UnsafeURL("webhook URL must not target a private or local address")
     return value.strip()
 

@@ -24,6 +24,7 @@ TEST_RESOLVED_ADDRESS = "1.1.1.1"
 @pytest.fixture(autouse=True)
 def deterministic_webhook_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     import ipaddress
+
     import security
 
     monkeypatch.setattr(

@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
+
 class ConfigurationError(ValueError):
     """Raised when a runtime configuration is unsafe or incomplete."""
 
