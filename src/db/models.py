@@ -120,6 +120,12 @@ class RepoSnapshot(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_repo_snapshots_repo_id_observed_at", "repo_id", "observed_at"),
         Index("ix_repo_snapshots_quality_status", "quality_status"),
+        Index(
+            "ix_repo_snapshots_repo_quality_observed",
+            "repo_id",
+            "quality_status",
+            "observed_at",
+        ),
     )
 
 
