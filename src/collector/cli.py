@@ -2231,3 +2231,7 @@ def notifications_deliveries(
         )
 
     _run_async(_impl)
+
+
+if __name__ == "__main__":
+    app()
