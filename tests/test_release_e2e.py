@@ -198,13 +198,17 @@ def test_release_check_script_is_runnable() -> None:
     assert script.read_text().splitlines()[0].startswith("#!")
     if os.name == "posix" and not os.access(script, os.X_OK):
         # Checkouts that were copied rather than cloned (file sync tools,
-        # zipped trees) lose the executable bit; the committed mode is the
-        # contract the release relies on, so accept it and keep the run below.
-        assert _committed_mode(script) == "100755", (
-            "scripts/release_check.py is not executable; run "
-            "`chmod +x scripts/release_check.py` (or `git checkout -- "
-            "scripts/release_check.py` to restore the committed 0755 mode)"
-        )
+        # zipped trees) lose the executable bit.  When git can vouch for the
+        # committed mode it is the contract; when it cannot (an untracked
+        # copy, or no repository at all) the run below is the only signal
+        # available, and a partial sync must not look like a product bug.
+        mode = _committed_mode(script)
+        if mode is not None:
+            assert mode == "100755", (
+                "scripts/release_check.py is not executable; run "
+                "`chmod +x scripts/release_check.py` (or `git checkout -- "
+                "scripts/release_check.py` to restore the committed 0755 mode)"
+            )
     result = subprocess.run(
         [sys.executable, str(script), "--help"],
         cwd=ROOT,
@@ -233,6 +237,14 @@ def test_release_check_uses_the_running_interpreter() -> None:
     ruff = module.ruff_command()
     assert ruff[0] == sys.executable or Path(ruff[0]).is_file()
     assert ruff[1:] == ["check", "src", "tests", "scripts"]
+
+
+def test_version_mismatch_detail_names_the_fix() -> None:
+    module = _load_release_check()
+    hint = module.version_mismatch_detail("0.8.0", "0.9.0")
+    assert hint.startswith("installed=0.8.0 code=0.9.0")
+    assert 'pip install -e ".[dev]"' in hint
+    assert "pip install" not in module.version_mismatch_detail("1.0.0", "1.0.0")
 
 
 def test_release_check_reports_a_missing_tool() -> None:
