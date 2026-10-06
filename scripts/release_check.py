@@ -5,8 +5,8 @@ Runs the whole v1.0 release checklist against a throwaway SQLite database and a
 throwaway dashboard data directory, then prints a table of results and exits
 non-zero if any check fails::
 
-    .venv/bin/python scripts/release_check.py
-    .venv/bin/python scripts/release_check.py --skip-tests   # faster iteration
+    python scripts/release_check.py                 # from any virtualenv
+    python scripts/release_check.py --skip-tests    # faster iteration
 
 Nothing touches the repository database, no network access is required and no
 GitHub token is needed.  Steps:
@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 # Deliberately no sys.path manipulation: the check must report where the
@@ -62,18 +63,56 @@ class Checker:
                 print(f"  failed: {name} — {detail}")
 
 
+def _run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """Run *command*, turning a missing executable into a normal failure.
+
+    ``FileNotFoundError`` from a tool that lives outside the running
+    environment used to escape as a traceback and hide every other result.
+    """
+
+    try:
+        return subprocess.run(command, **kwargs)
+    except OSError as error:
+        return subprocess.CompletedProcess(
+            command, 127, "", f"{command[0]}: {error.strerror or error}"
+        )
+
+
+def _interpreter_tool(name: str) -> str | None:
+    """Locate *name* next to ``sys.executable``, then on ``PATH``.
+
+    The virtualenv directory has no fixed name - ``.venv``, ``venv`` and the
+    system interpreter all happen - so a hardcoded ``.venv/bin/<tool>`` is a
+    bug rather than a fallback.
+    """
+
+    beside = Path(sys.executable).parent / name
+    if beside.is_file():
+        return str(beside)
+    return shutil.which(name)
+
+
+def pytest_command() -> list[str]:
+    """Run pytest with the interpreter that executes this script."""
+
+    return [sys.executable, "-m", "pytest", "-q"]
+
+
+def ruff_command() -> list[str]:
+    """Run ruff from the running environment, or as an importable module."""
+
+    tool = _interpreter_tool("ruff")
+    if tool is not None:
+        return [tool, "check", "src", "tests", "scripts"]
+    return [sys.executable, "-m", "ruff", "check", "src", "tests", "scripts"]
+
+
 def _cli(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     """Run the installed console script (the exact entry point users run)."""
 
-    console = ROOT / ".venv" / "bin" / "radar"
-    command = [str(console)] if console.exists() else [sys.executable, "-m", "collector.cli"]
-    return subprocess.run(
-        [*command, *args],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    console = _interpreter_tool("radar")
+    command = [console] if console else [sys.executable, "-m", "collector.cli"]
+    return _run([*command, *args], cwd=ROOT, env=env, capture_output=True, text=True)
 
 
 def _rows(payload: str) -> list[dict[str, object]]:
@@ -406,31 +445,33 @@ def check_static(checker: Checker) -> None:
 
 
 def check_external(checker: Checker, skip_tests: bool) -> None:
-    ruff = shutil.which("ruff") or str(ROOT / ".venv" / "bin" / "ruff")
-    result = subprocess.run(
-        [ruff, "check", "src", "tests", "scripts"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    detail = (result.stdout or result.stderr).strip().splitlines()[-1:] or [""]
-    checker.record("ruff check", result.returncode == 0, detail[0][:120])
+    lint = _run(ruff_command(), cwd=ROOT, capture_output=True, text=True)
+    detail = (lint.stdout or lint.stderr).strip().splitlines()[-1:] or [""]
+    if "No module named ruff" in (lint.stderr or ""):
+        detail = [
+            'ruff is not installed in the running environment; run '
+            '`pip install -e ".[dev]"`'
+        ]
+    checker.record("ruff check", lint.returncode == 0, detail[0][:120])
 
     if skip_tests:
         checker.record("pytest suite", True, "skipped")
     else:
-        pytest = str(ROOT / ".venv" / "bin" / "pytest")
-        result = subprocess.run([pytest, "-q"], cwd=ROOT, capture_output=True, text=True)
-        tail = (result.stdout or "").strip().splitlines()[-1:] or [""]
-        checker.record("pytest suite", result.returncode == 0, tail[0][:120])
+        suite = _run(pytest_command(), cwd=ROOT, capture_output=True, text=True)
+        tail = (suite.stdout or suite.stderr).strip().splitlines()[-1:] or [""]
+        checker.record("pytest suite", suite.returncode == 0, tail[0][:120])
 
-    audit = subprocess.run(
-        [str(ROOT / "scripts" / "security_audit.sh")],
+    audit_script = ROOT / "scripts" / "security_audit.sh"
+    bash = shutil.which("bash")
+    audit = _run(
+        [bash, str(audit_script)] if bash else [str(audit_script)],
         cwd=ROOT,
         capture_output=True,
         text=True,
+        # Audit the environment that is actually running the check.
+        env={**os.environ, "PYTHON": sys.executable},
     )
-    lines = (audit.stdout or "").strip().splitlines()
+    lines = (audit.stdout or audit.stderr).strip().splitlines()
     checker.record(
         "security audit (runtime dependencies)",
         audit.returncode == 0,
@@ -456,7 +497,8 @@ def main() -> int:
     env.pop("RADAR_API_AUTH_ENABLED", None)
 
     checker = Checker()
-    print(f"release check: database at {database}\n")
+    print(f"release check: database at {database}")
+    print(f"interpreter: {sys.executable}\n")
     try:
         check_checkout(checker)
         check_import_locations(checker)

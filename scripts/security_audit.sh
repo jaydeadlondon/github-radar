@@ -13,9 +13,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-PYTHON="${PYTHON:-python}"
-if [[ -x ".venv/bin/python" ]]; then
-  PYTHON=".venv/bin/python"
+# Honour an exported PYTHON (release_check.py passes the running
+# interpreter); otherwise prefer .venv, then the system python.
+if [[ -z "${PYTHON:-}" ]]; then
+  if [[ -x ".venv/bin/python" ]]; then
+    PYTHON=".venv/bin/python"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON="python3"
+  else
+    PYTHON="python"
+  fi
 fi
 
 if ! "$PYTHON" -m pip_audit --version >/dev/null 2>&1; then
