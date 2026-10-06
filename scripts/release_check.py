@@ -78,6 +78,15 @@ def _run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         )
 
 
+def version_mismatch_detail(installed: str, version: str) -> str:
+    """Explain a metadata mismatch and the command that fixes it."""
+
+    detail = f"installed={installed or 'n/a'} code={version}"
+    if installed != version:
+        detail += '; reinstall this checkout with `pip install -e ".[dev]"`'
+    return detail
+
+
 def _interpreter_tool(name: str) -> str | None:
     """Locate *name* next to ``sys.executable``, then on ``PATH``.
 
@@ -298,7 +307,7 @@ def check_version_consistency(checker: Checker) -> None:
     checker.record(
         "installed metadata matches version.py",
         installed == version,
-        f"installed={installed or 'n/a'} code={version}",
+        version_mismatch_detail(installed, version),
     )
 
     pyproject = (ROOT / "pyproject.toml").read_text()
