@@ -530,8 +530,11 @@ For the complete release checklist (version consistency, migrations on a
 throwaway database, API smoke test, formats, security audit) run:
 
 ```bash
-.venv/bin/python scripts/release_check.py
+python scripts/release_check.py
 ```
+
+The check uses the interpreter that runs it, so it works from any
+virtualenv (`.venv`, `venv` or an activated environment).
 
 For an offline performance snapshot of the analytics reads:
 
