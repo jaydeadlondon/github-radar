@@ -8,6 +8,7 @@ sync.  They deliberately avoid the network and the repository database.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -161,10 +163,48 @@ def test_release_documentation_is_present() -> None:
         assert heading in readme, heading
 
 
+def _committed_mode(path: Path) -> str | None:
+    """Return the mode git records for *path* (``100755``), or ``None``."""
+
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--stage", "--", path.relative_to(ROOT).as_posix()],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:  # pragma: no cover - git is not installed
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    return result.stdout.split()[0]
+
+
+def _load_release_check() -> Any:
+    """Import ``scripts/release_check.py`` to test its command helpers."""
+
+    spec = importlib.util.spec_from_file_location(
+        "release_check", ROOT / "scripts" / "release_check.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_release_check_script_is_runnable() -> None:
     script = ROOT / "scripts" / "release_check.py"
     assert script.is_file()
-    assert os.access(script, os.X_OK)
+    assert script.read_text().splitlines()[0].startswith("#!")
+    if os.name == "posix" and not os.access(script, os.X_OK):
+        # Checkouts that were copied rather than cloned (file sync tools,
+        # zipped trees) lose the executable bit; the committed mode is the
+        # contract the release relies on, so accept it and keep the run below.
+        assert _committed_mode(script) == "100755", (
+            "scripts/release_check.py is not executable; run "
+            "`chmod +x scripts/release_check.py` (or `git checkout -- "
+            "scripts/release_check.py` to restore the committed 0755 mode)"
+        )
     result = subprocess.run(
         [sys.executable, str(script), "--help"],
         cwd=ROOT,
@@ -174,6 +214,32 @@ def test_release_check_script_is_runnable() -> None:
     )
     assert result.returncode == 0
     assert "--skip-tests" in result.stdout
+
+
+def test_release_check_script_is_marked_executable_in_git() -> None:
+    mode = _committed_mode(ROOT / "scripts" / "release_check.py")
+    if mode is None:
+        pytest.skip("not a git checkout")
+    assert mode == "100755", (
+        "run `git update-index --chmod=+x scripts/release_check.py`"
+    )
+
+
+def test_release_check_uses_the_running_interpreter() -> None:
+    """The venv directory is not always ``.venv`` - ``venv`` must work too."""
+
+    module = _load_release_check()
+    assert module.pytest_command() == [sys.executable, "-m", "pytest", "-q"]
+    ruff = module.ruff_command()
+    assert ruff[0] == sys.executable or Path(ruff[0]).is_file()
+    assert ruff[1:] == ["check", "src", "tests", "scripts"]
+
+
+def test_release_check_reports_a_missing_tool() -> None:
+    module = _load_release_check()
+    result = module._run(["/nonexistent/radar-release-tool"], capture_output=True, text=True)
+    assert result.returncode == 127
+    assert "radar-release-tool" in result.stderr
 
 
 def test_database_file_is_not_tracked() -> None:
